@@ -3,19 +3,20 @@ defmodule FateWeb.BranchesLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    branches =
-      case Ash.read(Fate.Game.Branch, filter: [status: :active], load: [:head_event]) do
-        {:ok, branches} -> branches
-        _ -> []
-      end
+    branches = load_branches()
+    bookmarks = load_bookmarks()
 
-    {:ok, assign(socket, :branches, branches)}
+    {:ok,
+     socket
+     |> assign(:branches, branches)
+     |> assign(:bookmarks, bookmarks)
+     |> assign(:modal, nil)}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen p-8" style="background: #2d1f0e;">
+    <div class="min-h-screen p-8" style="background: #2d1f0e; color: #e8dcc8;">
       <h1
         class="text-4xl text-amber-100 mb-8"
         style="font-family: 'Permanent Marker', cursive;"
@@ -34,22 +35,180 @@ defmodule FateWeb.BranchesLive do
       <% else %>
         <div class="grid gap-4 max-w-2xl">
           <%= for branch <- @branches do %>
-            <.link
-              navigate={~p"/table/#{branch.id}"}
-              class="block p-4 rounded-lg bg-amber-900/40 border border-amber-700/30 hover:bg-amber-900/60 transition"
-            >
-              <div class="text-lg text-amber-100 font-bold" style="font-family: 'Patrick Hand', cursive;">
-                {branch.name}
+            <div class="p-4 rounded-lg bg-amber-900/40 border border-amber-700/30">
+              <div class="flex items-center gap-3">
+                <.link
+                  navigate={~p"/table/#{branch.id}"}
+                  class="flex-1 hover:text-amber-200 transition"
+                >
+                  <div class="text-lg text-amber-100 font-bold" style="font-family: 'Patrick Hand', cursive;">
+                    {branch.name}
+                  </div>
+                  <div class="text-xs text-amber-200/40 mt-0.5">
+                    {if branch.head_event, do: Calendar.strftime(branch.head_event.timestamp, "%b %d, %H:%M"), else: "—"}
+                  </div>
+                </.link>
+                <div class="flex gap-1">
+                  <button
+                    phx-click="bookmark_branch"
+                    phx-value-branch-id={branch.id}
+                    class="px-2 py-1 bg-amber-800/50 hover:bg-amber-700/50 rounded text-xs text-amber-200/70 transition"
+                  >
+                    Bookmark
+                  </button>
+                  <%= if length(@branches) > 1 do %>
+                    <button
+                      phx-click="archive_branch"
+                      phx-value-branch-id={branch.id}
+                      data-confirm="Archive this branch?"
+                      class="px-2 py-1 bg-red-900/40 hover:bg-red-800/40 rounded text-xs text-red-300/70 transition"
+                    >
+                      Archive
+                    </button>
+                  <% end %>
+                </div>
               </div>
-              <div class="text-xs text-amber-200/50 mt-1">
-                {branch.id}
-              </div>
-            </.link>
+            </div>
           <% end %>
+        </div>
+
+        <%!-- Bookmarks section --%>
+        <%= if @bookmarks != [] do %>
+          <h2 class="text-2xl text-amber-100 mt-10 mb-4" style="font-family: 'Permanent Marker', cursive;">
+            Bookmarks
+          </h2>
+          <div class="grid gap-3 max-w-2xl">
+            <%= for bm <- @bookmarks do %>
+              <div class="flex items-center gap-3 p-3 rounded-lg bg-amber-900/20 border border-amber-700/20">
+                <div class="flex-1">
+                  <div class="text-sm text-amber-100 font-bold" style="font-family: 'Patrick Hand', cursive;">{bm.name}</div>
+                  <%= if bm.description do %>
+                    <div class="text-xs text-amber-200/40">{bm.description}</div>
+                  <% end %>
+                  <div class="text-xs text-amber-200/25 mt-0.5">
+                    {Calendar.strftime(bm.created_at, "%b %d, %H:%M")}
+                  </div>
+                </div>
+                <button
+                  phx-click="fork_from_bookmark"
+                  phx-value-bookmark-id={bm.id}
+                  class="px-2 py-1 bg-green-900/40 hover:bg-green-800/40 rounded text-xs text-green-300/70 transition"
+                >
+                  Fork
+                </button>
+                <button
+                  phx-click="delete_bookmark"
+                  phx-value-bookmark-id={bm.id}
+                  data-confirm="Delete this bookmark?"
+                  class="px-2 py-1 bg-red-900/30 hover:bg-red-800/30 rounded text-xs text-red-300/50 transition"
+                >
+                  ✕
+                </button>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+      <% end %>
+
+      <%!-- Bookmark modal --%>
+      <%= if @modal == "bookmark" do %>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl">
+            <h3 class="text-lg font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
+              Create Bookmark
+            </h3>
+            <form phx-submit="submit_bookmark" class="space-y-3">
+              <input type="hidden" name="branch_id" value={@bookmark_branch_id} />
+              <div>
+                <label class="block text-sm text-amber-200/70 mb-1">Name</label>
+                <input type="text" name="name" placeholder="Before the fight"
+                  class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" />
+              </div>
+              <div>
+                <label class="block text-sm text-amber-200/70 mb-1">Description (optional)</label>
+                <input type="text" name="description" placeholder=""
+                  class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" />
+              </div>
+              <div class="flex gap-2 pt-2">
+                <button type="submit" class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm">Create</button>
+                <button type="button" phx-click="close_modal" class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm">Cancel</button>
+              </div>
+            </form>
+          </div>
         </div>
       <% end %>
     </div>
     """
+  end
+
+  @impl true
+  def handle_event("bookmark_branch", %{"branch-id" => branch_id}, socket) do
+    {:noreply, socket |> assign(:modal, "bookmark") |> assign(:bookmark_branch_id, branch_id)}
+  end
+
+  def handle_event("close_modal", _params, socket) do
+    {:noreply, assign(socket, :modal, nil)}
+  end
+
+  def handle_event("submit_bookmark", %{"branch_id" => branch_id, "name" => name} = params, socket) do
+    case Ash.get(Fate.Game.Branch, branch_id, not_found_error?: false) do
+      {:ok, %{head_event_id: event_id}} when event_id != nil ->
+        Ash.create(Fate.Game.Bookmark, %{
+          name: name,
+          description: params["description"],
+          event_id: event_id
+        }, action: :create)
+
+      _ ->
+        :ok
+    end
+
+    {:noreply,
+     socket
+     |> assign(:modal, nil)
+     |> assign(:bookmarks, load_bookmarks())}
+  end
+
+  def handle_event("fork_from_bookmark", %{"bookmark-id" => bookmark_id}, socket) do
+    case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
+      {:ok, %{event_id: event_id, name: bm_name}} when event_id != nil ->
+        case Ash.create(Fate.Game.Branch, %{
+          name: "Fork: #{bm_name}",
+          head_event_id: event_id
+        }, action: :create) do
+          {:ok, branch} ->
+            {:noreply,
+             socket
+             |> assign(:branches, load_branches())
+             |> put_flash(:info, "Forked branch: #{branch.name}")}
+
+          _ ->
+            {:noreply, put_flash(socket, :error, "Failed to fork")}
+        end
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "Bookmark not found")}
+    end
+  end
+
+  def handle_event("delete_bookmark", %{"bookmark-id" => bookmark_id}, socket) do
+    case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
+      {:ok, bookmark} when bookmark != nil ->
+        Ash.destroy!(bookmark, action: :delete)
+      _ -> :ok
+    end
+
+    {:noreply, assign(socket, :bookmarks, load_bookmarks())}
+  end
+
+  def handle_event("archive_branch", %{"branch-id" => branch_id}, socket) do
+    case Ash.get(Fate.Game.Branch, branch_id, not_found_error?: false) do
+      {:ok, branch} when branch != nil ->
+        Ash.update!(branch, %{status: :archived}, action: :set_status)
+      _ -> :ok
+    end
+
+    {:noreply, assign(socket, :branches, load_branches())}
   end
 
   @impl true
@@ -407,6 +566,22 @@ defmodule FateWeb.BranchesLive do
              seat_index: 3
            }, action: :create) do
       {:ok, branch}
+    end
+  end
+
+  defp load_branches do
+    case Ash.read(Fate.Game.Branch, filter: [status: :active], load: [:head_event]) do
+      {:ok, branches} -> branches
+      _ -> []
+    end
+  end
+
+  defp load_bookmarks do
+    require Ash.Query
+
+    case Ash.read(Fate.Game.Bookmark |> Ash.Query.sort(created_at: :desc)) do
+      {:ok, bookmarks} -> bookmarks
+      _ -> []
     end
   end
 end

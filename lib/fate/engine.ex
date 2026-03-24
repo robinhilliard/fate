@@ -15,9 +15,12 @@ defmodule Fate.Engine do
   Uses a recursive CTE to walk from the branch head to root.
   """
   def derive_state(branch_id) do
-    with {:ok, branch} <- Ash.get(Branch, branch_id, not_found_error?: false),
+    with {:ok, branch} when branch != nil <- Ash.get(Branch, branch_id, not_found_error?: false),
          {:ok, events} <- load_event_chain(branch.head_event_id) do
       {:ok, Replay.derive(branch_id, events)}
+    else
+      {:ok, nil} -> {:error, :not_found}
+      error -> error
     end
   end
 

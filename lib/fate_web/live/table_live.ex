@@ -136,6 +136,48 @@ defmodule FateWeb.TableLive do
     {:noreply, socket}
   end
 
+  def handle_event("compel_aspect", %{"entity-id" => entity_id, "aspect-id" => aspect_id, "description" => description}, socket) do
+    branch_id = socket.assigns.branch_id
+
+    Fate.Engine.append_event(branch_id, %{
+      type: :aspect_compel,
+      target_id: entity_id,
+      description: "Compel: #{description}",
+      detail: %{"aspect_id" => aspect_id, "description" => description, "accepted" => true}
+    })
+
+    Fate.Engine.append_event(branch_id, %{
+      type: :fate_point_earn,
+      target_id: entity_id,
+      description: "Earn FP from compel: #{description}",
+      detail: %{"entity_id" => entity_id, "amount" => 1}
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_event("begin_recovery", %{"consequence-id" => consequence_id, "entity-id" => entity_id, "aspect-text" => aspect_text}, socket) do
+    Fate.Engine.append_event(socket.assigns.branch_id, %{
+      type: :consequence_recover,
+      target_id: entity_id,
+      description: "Begin recovery: #{aspect_text}",
+      detail: %{"entity_id" => entity_id, "consequence_id" => consequence_id, "clear" => false}
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_event("clear_consequence", %{"consequence-id" => consequence_id, "entity-id" => entity_id}, socket) do
+    Fate.Engine.append_event(socket.assigns.branch_id, %{
+      type: :consequence_recover,
+      target_id: entity_id,
+      description: "Clear consequence",
+      detail: %{"entity_id" => entity_id, "consequence_id" => consequence_id, "clear" => true}
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_event("select", %{"id" => id, "type" => type}, socket) do
     item = %{id: id, type: type}
 
@@ -195,6 +237,14 @@ defmodule FateWeb.TableLive do
           type: :entity_remove,
           target_id: entity_id,
           description: "Remove entity"
+        })
+
+      "mook_eliminate" ->
+        Fate.Engine.append_event(branch_id, %{
+          type: :mook_eliminate,
+          target_id: entity_id,
+          description: "Mook eliminated",
+          detail: %{"entity_id" => entity_id, "count" => 1}
         })
 
       _ ->
@@ -738,7 +788,12 @@ defmodule FateWeb.TableLive do
           <div class="font-bold text-gray-900 text-base" style="font-family: 'Patrick Hand', cursive;">
             {@entity.name}
           </div>
-          <div class="text-xs text-gray-500 uppercase tracking-wide">{@entity.kind}</div>
+          <div class="text-xs text-gray-500 uppercase tracking-wide">
+            {@entity.kind}
+            <%= if @entity.mook_count do %>
+              <span class="ml-1 text-red-600 font-bold">×{@entity.mook_count}</span>
+            <% end %>
+          </div>
         </div>
         <div class="ml-auto relative z-10 ring-trigger" id={"ring-trigger-#{@entity.id}"} phx-hook=".RingTrigger">
           <div
@@ -781,14 +836,28 @@ defmodule FateWeb.TableLive do
               phx-value-description={aspect.description}
               phx-value-free={if(aspect.free_invokes > 0, do: "true", else: "false")}
               class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
+              data-tooltip={if(aspect.free_invokes > 0, do: "Free invoke", else: "Invoke (spend FP)")}
             >
               {if aspect.free_invokes > 0, do: "Free", else: "FP"}
             </button>
+            <%= if @is_gm do %>
+              <button
+                phx-click="compel_aspect"
+                phx-value-aspect-id={aspect.id}
+                phx-value-entity-id={@entity.id}
+                phx-value-description={aspect.description}
+                class="px-1.5 py-0.5 bg-amber-600/80 hover:bg-amber-500 text-white rounded text-xs leading-none transition"
+                data-tooltip="Compel"
+              >
+                C
+              </button>
+            <% end %>
             <button
               phx-click="remove_aspect"
               phx-value-aspect-id={aspect.id}
               phx-value-entity-id={@entity.id}
               class="text-red-400 hover:text-red-600 text-xs leading-none transition px-0.5"
+              data-tooltip="Remove"
             >
               ✕
             </button>
@@ -798,11 +867,35 @@ defmodule FateWeb.TableLive do
 
       <%!-- Consequences (only shown when taken) --%>
       <%= for cons <- @entity.consequences do %>
-        <div class={"text-xs px-2 py-1 rounded mb-1 #{if cons.recovering, do: "bg-green-50 border-l-2 border-green-300", else: "bg-red-50 border-l-2 border-red-300"}"}>
-          <span class="text-gray-400 uppercase" style="font-size: 0.6rem;">{cons.severity}</span>
-          <span class="font-semibold text-gray-900 ml-1" style="font-family: 'Permanent Marker', cursive; font-size: 0.75rem;">
+        <div class={"group/cons flex items-center gap-1 text-xs px-2 py-1 rounded mb-1 #{if cons.recovering, do: "bg-green-50 border-l-2 border-green-300", else: "bg-red-50 border-l-2 border-red-300"}"}>
+          <span class="text-gray-400 uppercase shrink-0" style="font-size: 0.6rem;">{cons.severity}</span>
+          <span class="flex-1 font-semibold text-gray-900" style="font-family: 'Permanent Marker', cursive; font-size: 0.75rem;">
             {cons.aspect_text || "—"}
           </span>
+          <div class="opacity-0 group-hover/cons:opacity-100 transition-opacity flex gap-0.5 shrink-0">
+            <%= if cons.recovering do %>
+              <button
+                phx-click="clear_consequence"
+                phx-value-consequence-id={cons.id}
+                phx-value-entity-id={@entity.id}
+                class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
+                data-tooltip="Clear"
+              >
+                <.icon name="hero-check" class="w-3 h-3" />
+              </button>
+            <% else %>
+              <button
+                phx-click="begin_recovery"
+                phx-value-consequence-id={cons.id}
+                phx-value-entity-id={@entity.id}
+                phx-value-aspect-text={cons.aspect_text}
+                class="px-1.5 py-0.5 bg-blue-600/80 hover:bg-blue-500 text-white rounded text-xs leading-none transition"
+                data-tooltip="Begin recovery"
+              >
+                <.icon name="hero-arrow-path" class="w-3 h-3" />
+              </button>
+            <% end %>
+          </div>
         </div>
       <% end %>
 
@@ -1179,6 +1272,11 @@ defmodule FateWeb.TableLive do
         </button>
         <button class="ring-item" phx-click="ring_action" phx-value-action="concede" phx-value-entity-id={@entity.id} data-tooltip="Concede">
           <.icon name="hero-flag" class="w-3.5 h-3.5" />
+        </button>
+      <% end %>
+      <%= if @entity.mook_count do %>
+        <button class="ring-item ring-item-danger" phx-click="ring_action" phx-value-action="mook_eliminate" phx-value-entity-id={@entity.id} data-tooltip="Eliminate mook">
+          <.icon name="hero-x-circle" class="w-3.5 h-3.5" />
         </button>
       <% end %>
       <%= if @is_gm do %>

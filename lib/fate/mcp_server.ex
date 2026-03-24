@@ -204,6 +204,51 @@ defmodule Fate.McpServer do
           },
           required: ["name"]
         }
+      },
+      %{
+        name: "remove_entity",
+        description: "Remove an entity from the game",
+        input_schema: %{type: "object", properties: %{entity_id: %{type: "string"}}, required: ["entity_id"]}
+      },
+      %{
+        name: "stress_apply",
+        description: "Check a stress box on an entity",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            entity_id: %{type: "string"}, track_label: %{type: "string", description: "e.g. physical or mental"},
+            box_index: %{type: "integer", description: "1-based box number"}
+          },
+          required: ["entity_id", "track_label", "box_index"]
+        }
+      },
+      %{
+        name: "consequence_take",
+        description: "Apply a consequence to an entity",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            entity_id: %{type: "string"}, severity: %{type: "string", description: "mild, moderate, severe, or extreme"},
+            aspect_text: %{type: "string", description: "The consequence aspect text"}
+          },
+          required: ["entity_id", "severity", "aspect_text"]
+        }
+      },
+      %{
+        name: "concede",
+        description: "An entity concedes a conflict",
+        input_schema: %{type: "object", properties: %{entity_id: %{type: "string"}}, required: ["entity_id"]}
+      },
+      %{
+        name: "entity_move",
+        description: "Move an entity to a zone or remove from zone",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            entity_id: %{type: "string"}, zone_id: %{type: "string", description: "Zone ID, or null to leave zone"}
+          },
+          required: ["entity_id"]
+        }
       }
     ]
 
@@ -480,6 +525,66 @@ defmodule Fate.McpServer do
 
       _ ->
         {:ok, [%{type: "text", text: "[]"}], state}
+    end
+  end
+
+  def handle_call_tool("remove_entity", %{"entity_id" => entity_id}, state) do
+    case Engine.append_event(state.branch_id, %{
+      type: :entity_remove,
+      target_id: entity_id,
+      description: "Remove entity"
+    }) do
+      {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Entity removed"}], state}
+      _ -> {:error, %{code: -32000, message: "Failed to remove entity"}, state}
+    end
+  end
+
+  def handle_call_tool("stress_apply", %{"entity_id" => entity_id, "track_label" => track_label, "box_index" => box_index}, state) do
+    case Engine.append_event(state.branch_id, %{
+      type: :stress_apply,
+      target_id: entity_id,
+      description: "Stress #{track_label} box #{box_index}",
+      detail: %{"entity_id" => entity_id, "track_label" => track_label, "box_index" => box_index, "shifts_absorbed" => box_index}
+    }) do
+      {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Stress applied: #{track_label} box #{box_index}"}], state}
+      _ -> {:error, %{code: -32000, message: "Failed to apply stress"}, state}
+    end
+  end
+
+  def handle_call_tool("consequence_take", %{"entity_id" => entity_id, "severity" => severity, "aspect_text" => aspect_text}, state) do
+    case Engine.append_event(state.branch_id, %{
+      type: :consequence_take,
+      target_id: entity_id,
+      description: "#{severity}: #{aspect_text}",
+      detail: %{"entity_id" => entity_id, "severity" => severity, "aspect_text" => aspect_text}
+    }) do
+      {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Consequence taken: #{severity} — #{aspect_text}"}], state}
+      _ -> {:error, %{code: -32000, message: "Failed to take consequence"}, state}
+    end
+  end
+
+  def handle_call_tool("concede", %{"entity_id" => entity_id}, state) do
+    case Engine.append_event(state.branch_id, %{
+      type: :concede,
+      actor_id: entity_id,
+      description: "Concede"
+    }) do
+      {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Entity conceded"}], state}
+      _ -> {:error, %{code: -32000, message: "Failed to concede"}, state}
+    end
+  end
+
+  def handle_call_tool("entity_move", %{"entity_id" => entity_id} = args, state) do
+    zone_id = args["zone_id"]
+
+    case Engine.append_event(state.branch_id, %{
+      type: :entity_move,
+      actor_id: entity_id,
+      description: if(zone_id, do: "Move to zone", else: "Leave zone"),
+      detail: %{"entity_id" => entity_id, "zone_id" => zone_id}
+    }) do
+      {:ok, _state, _event} -> {:ok, [%{type: "text", text: if(zone_id, do: "Moved to zone", else: "Left zone")}], state}
+      _ -> {:error, %{code: -32000, message: "Failed to move entity"}, state}
     end
   end
 

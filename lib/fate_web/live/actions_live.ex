@@ -404,6 +404,47 @@ defmodule FateWeb.ActionsLive do
             }
           })
 
+        "entity_edit" ->
+          detail =
+            %{"entity_id" => params["entity_id"]}
+            |> put_non_empty("name", params["name"])
+            |> put_non_empty("kind", params["kind"])
+            |> put_non_empty("color", params["color"])
+            |> maybe_put_int("fate_points", params["fate_points"])
+            |> maybe_put_int("refresh", params["refresh"])
+
+          Engine.append_event(socket.assigns.branch_id, %{
+            type: :entity_modify,
+            target_id: params["entity_id"],
+            description: "Edit #{params["name"] || "entity"}",
+            detail: detail
+          })
+
+        "skill_set" ->
+          Engine.append_event(socket.assigns.branch_id, %{
+            type: :skill_set,
+            target_id: params["entity_id"],
+            description: "#{params["skill"]} → +#{params["rating"]}",
+            detail: %{
+              "entity_id" => params["entity_id"],
+              "skill" => params["skill"],
+              "rating" => parse_int(params["rating"]) || 0
+            }
+          })
+
+        "stunt_add" ->
+          Engine.append_event(socket.assigns.branch_id, %{
+            type: :stunt_add,
+            target_id: params["entity_id"],
+            description: "Stunt: #{params["name"]}",
+            detail: %{
+              "entity_id" => params["entity_id"],
+              "stunt_id" => Ash.UUID.generate(),
+              "name" => params["name"],
+              "effect" => params["effect"]
+            }
+          })
+
         _ ->
           {:error, "Unknown modal type"}
       end
@@ -619,7 +660,7 @@ defmodule FateWeb.ActionsLive do
                 hover:bg-amber-800/40 hover:border-amber-600/40 transition text-sm"
               style="font-family: 'Patrick Hand', cursive;"
             >
-              {Map.get(@event_type_labels, step_type, to_string(step_type))}
+              {step_type_label(step_type)}
             </button>
           <% end %>
         </div>
@@ -671,7 +712,7 @@ defmodule FateWeb.ActionsLive do
     >
       <span class="text-xs text-amber-300/50 font-bold">{@index + 1}.</span>
       <span class="text-sm flex-1" style="font-family: 'Patrick Hand', cursive;">
-        {Map.get(@event_type_labels, @step.type, to_string(@step.type))}
+        {step_type_label(@step.type)}
       </span>
       <span class="text-xs text-amber-200/40 flex-1 truncate">{@desc}</span>
       <%!-- Dice preview for rolls --%>
@@ -711,7 +752,7 @@ defmodule FateWeb.ActionsLive do
     <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
-          {Map.get(@event_type_labels, @step.type, to_string(@step.type))}
+          {step_type_label(@step.type)}
         </span>
         <div class="flex gap-1">
           <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
@@ -1008,7 +1049,7 @@ defmodule FateWeb.ActionsLive do
     <div class="flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-600/30">
       <span class="text-xs text-amber-300/50 font-bold">{@index + 1}.</span>
       <span class="text-sm flex-1" style="font-family: 'Patrick Hand', cursive;">
-        {Map.get(@event_type_labels, @step.type, to_string(@step.type))}
+        {step_type_label(@step.type)}
       </span>
       <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
       <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
@@ -1131,7 +1172,7 @@ defmodule FateWeb.ActionsLive do
 
   defp get_head_event_id(branch_id) do
     case Ash.get(Fate.Game.Branch, branch_id, not_found_error?: false) do
-      {:ok, branch} -> branch.head_event_id
+      {:ok, %{head_event_id: id}} -> id
       _ -> nil
     end
   end
@@ -1196,7 +1237,10 @@ defmodule FateWeb.ActionsLive do
       {"fate_point_spend", "Spend FP"},
       {"fate_point_earn", "Earn FP"},
       {"fate_point_refresh", "Refresh FP"},
-      {"entity_create", "Create Entity"}
+      {"entity_create", "Create Entity"},
+      {"entity_edit", "Edit Entity"},
+      {"skill_set", "Set Skill"},
+      {"stunt_add", "Add Stunt"}
     ]
   end
 
@@ -1209,6 +1253,14 @@ defmodule FateWeb.ActionsLive do
       _ -> %{}
     end
   end
+
+  defp put_non_empty(map, _key, nil), do: map
+  defp put_non_empty(map, _key, ""), do: map
+  defp put_non_empty(map, key, val), do: Map.put(map, key, val)
+
+  defp maybe_put_int(map, _key, nil), do: map
+  defp maybe_put_int(map, _key, ""), do: map
+  defp maybe_put_int(map, key, val), do: Map.put(map, key, parse_int(val))
 
   defp entity_hidden?(entity), do: entity.hidden
 
@@ -1269,6 +1321,9 @@ defmodule FateWeb.ActionsLive do
   defp modal_title("fate_point_earn"), do: "Earn Fate Point"
   defp modal_title("fate_point_refresh"), do: "Refresh Fate Points"
   defp modal_title("entity_create"), do: "Create Entity"
+  defp modal_title("entity_edit"), do: "Edit Entity"
+  defp modal_title("skill_set"), do: "Set Skill"
+  defp modal_title("stunt_add"), do: "Add Stunt"
   defp modal_title(other), do: other
 
   defp modal_fields(%{modal: "aspect_create"} = assigns) do
@@ -1394,6 +1449,48 @@ defmodule FateWeb.ActionsLive do
     """
   end
 
+  defp modal_fields(%{modal: "entity_edit"} = assigns) do
+    ~H"""
+    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.text_input name="name" label="Name" placeholder="New name" />
+    <.select_input name="kind" label="Kind" options={[
+      {"", "— no change —"}, {"pc", "PC"}, {"npc", "NPC"}, {"mook_group", "Mook Group"},
+      {"organization", "Organization"}, {"vehicle", "Vehicle"},
+      {"item", "Item"}, {"hazard", "Hazard"}, {"custom", "Custom"}
+    ]} />
+    <.text_input name="color" label="Color" placeholder="#dc2626" />
+    <.text_input name="fate_points" label="Fate Points" placeholder="" />
+    <.text_input name="refresh" label="Refresh" placeholder="" />
+    """
+  end
+
+  defp modal_fields(%{modal: "skill_set"} = assigns) do
+    skill_list = if assigns.state, do: assigns.state.skill_list, else: []
+
+    assigns = assign(assigns, :skill_list, skill_list)
+
+    ~H"""
+    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Skill</label>
+      <select name="skill" class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm">
+        <%= for skill <- @skill_list do %>
+          <option value={skill}>{skill}</option>
+        <% end %>
+      </select>
+    </div>
+    <.text_input name="rating" label="Rating" placeholder="2" />
+    """
+  end
+
+  defp modal_fields(%{modal: "stunt_add"} = assigns) do
+    ~H"""
+    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.text_input name="name" label="Stunt Name" placeholder="Master Swordswoman" />
+    <.text_input name="effect" label="Effect" placeholder="+2 to Fight when dueling one-on-one" />
+    """
+  end
+
   defp modal_fields(assigns) do
     ~H"""
     <p class="text-sm text-amber-200/50">No fields configured for this action type.</p>
@@ -1445,6 +1542,8 @@ defmodule FateWeb.ActionsLive do
   end
 
   # --- Step form helpers ---
+
+  defp step_type_label(type), do: Map.get(@event_type_labels, type, to_string(type))
 
   defp default_step_detail(type) when type in @roll_types do
     %{"skill" => nil, "skill_rating" => 0, "fudge_dice" => [0, 0, 0, 0], "raw_total" => 0, "difficulty" => nil}
