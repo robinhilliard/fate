@@ -1,10 +1,10 @@
-defmodule Fate.Game.BranchParticipant do
+defmodule Fate.Game.BookmarkParticipant do
   use Ash.Resource,
     domain: Fate.Game,
     data_layer: AshPostgres.DataLayer
 
   postgres do
-    table "branch_participants"
+    table "bookmark_participants"
     repo Fate.Repo
   end
 
@@ -19,7 +19,7 @@ defmodule Fate.Game.BranchParticipant do
   end
 
   relationships do
-    belongs_to :branch, Fate.Game.Branch do
+    belongs_to :bookmark, Fate.Game.Bookmark do
       allow_nil? false
     end
 
@@ -32,7 +32,7 @@ defmodule Fate.Game.BranchParticipant do
     defaults [:read]
 
     create :create do
-      accept [:role, :seat_index, :branch_id, :participant_id]
+      accept [:role, :seat_index, :bookmark_id, :participant_id]
     end
 
     update :update do

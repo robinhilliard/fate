@@ -19,8 +19,8 @@ defmodule FateWeb.Router do
 
     live "/", LobbyLive
     live "/branches", BranchesLive
-    live "/table/:branch_id", TableLive
-    live "/actions/:branch_id", ActionsLive
+    live "/table/:bookmark_id", TableLive
+    live "/actions/:bookmark_id", ActionsLive
   end
 
   scope "/api" do

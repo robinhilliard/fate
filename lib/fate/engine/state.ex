@@ -65,7 +65,7 @@ defmodule Fate.Engine.State do
 
   defmodule DerivedState do
     defstruct [
-      :branch_id,
+      :bookmark_id,
       :head_event_id,
       :campaign_name,
       :system,

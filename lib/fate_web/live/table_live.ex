@@ -12,36 +12,39 @@ defmodule FateWeb.TableLive do
       |> assign(:is_gm, is_gm)
       |> assign(:dock_position, :south)
       |> assign(:tent_size, 0.3)
-      |> assign(:branch_id, nil)
+      |> assign(:bookmark_id, nil)
       |> assign(:state, nil)
       |> assign(:participants, [])
       |> assign(:current_participant, nil)
       |> assign(:selection, [])
+      |> assign(:current_scene_id, nil)
       |> assign(:table_modal, nil)
 
     {:ok, socket}
   end
 
   @impl true
-  def handle_params(%{"branch_id" => branch_id}, _uri, socket) do
+  def handle_params(%{"bookmark_id" => bookmark_id}, _uri, socket) do
     if connected?(socket) do
-      Engine.subscribe(branch_id)
-      Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{branch_id}")
+      Engine.subscribe(bookmark_id)
+      Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{bookmark_id}")
 
-      case Engine.derive_state(branch_id) do
+      case Engine.derive_state(bookmark_id) do
         {:ok, state} ->
-          participants = load_branch_participants(branch_id)
+          participants = load_bookmark_participants(bookmark_id)
+          current_scene = find_default_scene(state)
           {:noreply,
            socket
-           |> assign(:branch_id, branch_id)
+           |> assign(:bookmark_id, bookmark_id)
            |> assign(:state, state)
-           |> assign(:participants, participants)}
+           |> assign(:participants, participants)
+           |> assign(:current_scene_id, current_scene && current_scene.id)}
 
         {:error, _reason} ->
-          {:noreply, put_flash(socket, :error, "Could not load branch")}
+          {:noreply, put_flash(socket, :error, "Could not load bookmark")}
       end
     else
-      {:noreply, assign(socket, :branch_id, branch_id)}
+      {:noreply, assign(socket, :bookmark_id, bookmark_id)}
     end
   end
 
@@ -70,7 +73,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("remove_aspect", %{"aspect-id" => aspect_id, "entity-id" => entity_id}, socket) do
-    Fate.Engine.append_event(socket.assigns.branch_id, %{
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :aspect_remove,
       target_id: entity_id,
       description: "Remove aspect",
@@ -81,7 +84,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("remove_scene_aspect", %{"aspect-id" => aspect_id}, socket) do
-    Fate.Engine.append_event(socket.assigns.branch_id, %{
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :aspect_remove,
       description: "Remove scene aspect",
       detail: %{"aspect_id" => aspect_id}
@@ -91,7 +94,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("remove_from_zone", %{"entity_id" => entity_id}, socket) do
-    case Fate.Engine.append_event(socket.assigns.branch_id, %{
+    case Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :entity_move,
       actor_id: entity_id,
       description: "Leave zone",
@@ -103,7 +106,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("move_to_zone", %{"entity_id" => entity_id, "zone_id" => zone_id}, socket) do
-    case Fate.Engine.append_event(socket.assigns.branch_id, %{
+    case Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :entity_move,
       actor_id: entity_id,
       description: "Move to zone",
@@ -118,7 +121,7 @@ defmodule FateWeb.TableLive do
     is_free = free == "true"
 
     if !is_free do
-      Fate.Engine.append_event(socket.assigns.branch_id, %{
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :fate_point_spend,
         target_id: entity_id,
         description: "Spend FP to invoke: #{description}",
@@ -126,7 +129,7 @@ defmodule FateWeb.TableLive do
       })
     end
 
-    Fate.Engine.append_event(socket.assigns.branch_id, %{
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :invoke,
       actor_id: entity_id,
       description: "Invoke: #{description}#{if is_free, do: " (free)", else: " (FP)"}",
@@ -137,7 +140,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("compel_aspect", %{"entity-id" => entity_id, "aspect-id" => aspect_id, "description" => description}, socket) do
-    branch_id = socket.assigns.branch_id
+    branch_id = socket.assigns.bookmark_id
 
     Fate.Engine.append_event(branch_id, %{
       type: :aspect_compel,
@@ -157,7 +160,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("begin_recovery", %{"consequence-id" => consequence_id, "entity-id" => entity_id, "aspect-text" => aspect_text}, socket) do
-    Fate.Engine.append_event(socket.assigns.branch_id, %{
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :consequence_recover,
       target_id: entity_id,
       description: "Begin recovery: #{aspect_text}",
@@ -168,7 +171,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("clear_consequence", %{"consequence-id" => consequence_id, "entity-id" => entity_id}, socket) do
-    Fate.Engine.append_event(socket.assigns.branch_id, %{
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :consequence_recover,
       target_id: entity_id,
       description: "Clear consequence",
@@ -188,10 +191,10 @@ defmodule FateWeb.TableLive do
         socket.assigns.selection ++ [item]
       end
 
-    if socket.assigns.branch_id do
+    if socket.assigns.bookmark_id do
       Phoenix.PubSub.broadcast(
         Fate.PubSub,
-        "selection:#{socket.assigns.branch_id}",
+        "selection:#{socket.assigns.bookmark_id}",
         {:selection_updated, selection}
       )
     end
@@ -200,7 +203,7 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("ring_action", %{"action" => action, "entity-id" => entity_id}, socket) do
-    branch_id = socket.assigns.branch_id
+    branch_id = socket.assigns.bookmark_id
 
     case action do
       "fp_earn" ->
@@ -255,21 +258,30 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("ring_action", %{"action" => "end_scene"}, socket) do
-    active = Enum.find(socket.assigns.state.scenes, &(&1.status == :active))
+    scene = Enum.find(socket.assigns.state.scenes, &(&1.id == socket.assigns.current_scene_id))
 
-    if active do
-      Fate.Engine.append_event(socket.assigns.branch_id, %{
+    if scene do
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :scene_end,
-        description: "End scene: #{active.name}",
-        detail: %{"scene_id" => active.id}
+        description: "End scene: #{scene.name}",
+        detail: %{"scene_id" => scene.id}
       })
     end
 
-    {:noreply, socket}
+    next_scene = find_default_scene(socket.assigns.state)
+    {:noreply, assign(socket, :current_scene_id, next_scene && next_scene.id)}
+  end
+
+  def handle_event("ring_action", %{"action" => "switch_scene", "scene-id" => scene_id}, socket) do
+    {:noreply, socket |> assign(:current_scene_id, scene_id) |> assign(:table_modal, nil)}
   end
 
   def handle_event("ring_action", %{"action" => "new_scene"}, socket) do
     {:noreply, assign(socket, :table_modal, "scene_start")}
+  end
+
+  def handle_event("ring_action", %{"action" => "switch_scene_list"}, socket) do
+    {:noreply, assign(socket, :table_modal, "switch_scene")}
   end
 
   def handle_event("ring_action", %{"action" => "add_zone"}, socket) do
@@ -288,7 +300,7 @@ defmodule FateWeb.TableLive do
         end)
 
     unless already_checked do
-      Fate.Engine.append_event(socket.assigns.branch_id, %{
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :stress_apply,
         target_id: entity_id,
         description: "Apply stress: #{track_label} box #{box_index}",
@@ -309,7 +321,7 @@ defmodule FateWeb.TableLive do
     zone = active && Enum.find(active.zones, &(&1.id == zone_id))
 
     if zone do
-      Fate.Engine.append_event(socket.assigns.branch_id, %{
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :zone_modify,
         description: "#{if zone.hidden, do: "Reveal", else: "Hide"} zone: #{zone.name}",
         detail: %{"zone_id" => zone_id, "hidden" => !zone.hidden}
@@ -323,7 +335,7 @@ defmodule FateWeb.TableLive do
     aspect = find_scene_aspect(socket.assigns.state, aspect_id)
 
     if aspect do
-      Fate.Engine.append_event(socket.assigns.branch_id, %{
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :aspect_modify,
         description: "#{if aspect.hidden, do: "Reveal", else: "Hide"} #{aspect.description}",
         detail: %{"aspect_id" => aspect_id, "hidden" => !aspect.hidden}
@@ -338,40 +350,52 @@ defmodule FateWeb.TableLive do
   end
 
   def handle_event("submit_table_modal", params, socket) do
-    case socket.assigns.table_modal do
-      "scene_start" ->
-        Fate.Engine.append_event(socket.assigns.branch_id, %{
-          type: :scene_start,
-          description: "Start scene: #{params["name"]}",
-          detail: %{
-            "scene_id" => Ash.UUID.generate(),
-            "name" => params["name"],
-            "description" => params["scene_description"],
-            "gm_notes" => params["gm_notes"]
-          }
-        })
+    new_scene_id =
+      case socket.assigns.table_modal do
+        "scene_start" ->
+          scene_id = Ash.UUID.generate()
 
-      "zone_create" ->
-        active = Enum.find(socket.assigns.state.scenes, &(&1.status == :active))
-
-        if active do
-          Fate.Engine.append_event(socket.assigns.branch_id, %{
-            type: :zone_create,
-            description: "Create zone: #{params["name"]}",
+          Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+            type: :scene_start,
+            description: "Start scene: #{params["name"]}",
             detail: %{
-              "scene_id" => active.id,
-              "zone_id" => Ash.UUID.generate(),
+              "scene_id" => scene_id,
               "name" => params["name"],
-              "hidden" => true
+              "description" => params["scene_description"],
+              "gm_notes" => params["gm_notes"]
             }
           })
-        end
 
-      _ ->
-        :ok
-    end
+          scene_id
 
-    {:noreply, assign(socket, :table_modal, nil)}
+        "zone_create" ->
+          active = Enum.find(socket.assigns.state.scenes, &(&1.id == socket.assigns.current_scene_id))
+
+          if active do
+            Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+              type: :zone_create,
+              description: "Create zone: #{params["name"]}",
+              detail: %{
+                "scene_id" => active.id,
+                "zone_id" => Ash.UUID.generate(),
+                "name" => params["name"],
+                "hidden" => true
+              }
+            })
+          end
+
+          nil
+
+        _ ->
+          nil
+      end
+
+    socket =
+      socket
+      |> assign(:table_modal, nil)
+      |> then(fn s -> if new_scene_id, do: assign(s, :current_scene_id, new_scene_id), else: s end)
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -382,7 +406,7 @@ defmodule FateWeb.TableLive do
       class="relative w-screen h-screen overflow-hidden"
       style="background: #2d1f0e; background-image: url('/images/felt-texture.png');"
       phx-hook="SpringLayout"
-      data-scene-key={@branch_id || "default"}
+      data-scene-key={@bookmark_id || "default"}
       data-scene-id={active_scene_id(@state)}
     >
       <%= if @state == nil do %>
@@ -400,7 +424,7 @@ defmodule FateWeb.TableLive do
       <% else %>
         <%!-- Window switcher --%>
         <a
-          href={~p"/actions/#{@branch_id}"}
+          href={~p"/actions/#{@bookmark_id}"}
           target="fate-actions"
           class="absolute bottom-3 right-3 z-50 px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
           style="font-family: 'Patrick Hand', cursive;"
@@ -433,7 +457,7 @@ defmodule FateWeb.TableLive do
 
         <%!-- === GM Notes Card (always visible for GM) === --%>
         <%= if @is_gm do %>
-          <% gm_scene = @state && @state.scenes |> Enum.find(&(&1.status == :active)) %>
+          <% gm_scene = @state && Enum.find(@state.scenes, &(&1.id == @current_scene_id)) %>
           <div
             class="absolute spring-element"
             data-anchor="gm"
@@ -447,7 +471,7 @@ defmodule FateWeb.TableLive do
                 phx-hook=".RingTrigger"
               >
                 <.icon name="hero-cog-6-tooth" class="w-3 h-3 text-amber-200" />
-                <.gm_notes_ring state={@state} />
+                <.gm_notes_ring state={@state} current_scene_id={@current_scene_id} />
               </div>
               <%= if gm_scene do %>
                 <div class="text-sm font-bold text-amber-100/90 mb-1" style="font-family: 'Patrick Hand', cursive;">
@@ -494,7 +518,7 @@ defmodule FateWeb.TableLive do
         <% end %>
 
         <%!-- === Scene title — anchored at 2/3 offset from GM === --%>
-        <% active_scene = @state.scenes |> Enum.find(&(&1.status == :active)) %>
+        <% active_scene = Enum.find(@state.scenes, &(&1.id == @current_scene_id)) %>
         <%= if active_scene do %>
           <div
             class="absolute spring-element"
@@ -650,7 +674,7 @@ defmodule FateWeb.TableLive do
         <% end %>
 
         <%!-- === Scene aspects — anchored to scene === --%>
-        <%= for aspect <- scene_aspects(@state, @is_gm) do %>
+        <%= for aspect <- scene_aspects(@state, @is_gm, @current_scene_id) do %>
           <div
             class={["absolute spring-element", aspect.hidden && "opacity-40 hover:opacity-70 transition-opacity duration-300"]}
             data-anchor="centre"
@@ -1305,16 +1329,22 @@ defmodule FateWeb.TableLive do
   end
 
   defp gm_notes_ring(assigns) do
-    active_scene = Enum.find(assigns.state.scenes, &(&1.status == :active))
-    assigns = assign(assigns, :active_scene, active_scene)
+    active_scene = Enum.find(assigns.state.scenes, &(&1.id == assigns.current_scene_id))
+    active_scenes = Enum.filter(assigns.state.scenes, &(&1.status == :active))
+    assigns = assigns |> assign(:active_scene, active_scene) |> assign(:active_scenes, active_scenes)
 
     ~H"""
     <div class="context-ring" id="ring-gm-notes">
       <button class="ring-item" phx-click="ring_action" phx-value-action="new_scene" data-tooltip="New Scene">
         <.icon name="hero-play" class="w-3.5 h-3.5" />
       </button>
+      <%= if length(@active_scenes) > 1 do %>
+        <button class="ring-item" phx-click="ring_action" phx-value-action="switch_scene_list" data-tooltip="Switch Scene">
+          <.icon name="hero-arrows-right-left" class="w-3.5 h-3.5" />
+        </button>
+      <% end %>
       <%= if @active_scene do %>
-        <button class="ring-item ring-item-danger" phx-click="ring_action" phx-value-action="end_scene" data-tooltip="End Scene">
+        <button class="ring-item ring-item-danger" phx-click="ring_action" phx-value-action="end_scene" data-tooltip="End Scene" data-confirm="End this scene? This clears stress and removes boosts.">
           <.icon name="hero-stop" class="w-3.5 h-3.5" />
         </button>
         <button class="ring-item" phx-click="ring_action" phx-value-action="add_zone" data-tooltip="Add Zone">
@@ -1396,6 +1426,43 @@ defmodule FateWeb.TableLive do
     """
   end
 
+  defp table_modal(%{modal: "switch_scene"} = assigns) do
+    active_scenes =
+      if assigns[:state], do: Enum.filter(assigns.state.scenes, &(&1.status == :active)), else: []
+    assigns = assign(assigns, :active_scenes, active_scenes)
+
+    ~H"""
+    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60" phx-click="close_table_modal">
+      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl" phx-click-away="close_table_modal">
+        <h3 class="text-lg font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
+          Switch Scene
+        </h3>
+        <div class="space-y-2">
+          <%= for scene <- @active_scenes do %>
+            <button
+              phx-click="ring_action"
+              phx-value-action="switch_scene"
+              phx-value-scene-id={scene.id}
+              class="w-full text-left px-3 py-2 bg-amber-900/30 border border-amber-700/20 rounded-lg hover:bg-amber-800/40 transition"
+            >
+              <div class="text-sm text-amber-100 font-bold" style="font-family: 'Patrick Hand', cursive;">
+                {scene.name || "(null scene)"}
+              </div>
+              <%= if scene.description do %>
+                <div class="text-xs text-amber-200/40">{scene.description}</div>
+              <% end %>
+            </button>
+          <% end %>
+        </div>
+        <button type="button" phx-click="close_table_modal"
+          class="w-full mt-3 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm">
+          Cancel
+        </button>
+      </div>
+    </div>
+    """
+  end
+
   defp table_modal(assigns), do: ~H""
 
   # --- Helper functions ---
@@ -1410,11 +1477,11 @@ defmodule FateWeb.TableLive do
     _ -> false
   end
 
-  defp load_branch_participants(branch_id) do
+  defp load_bookmark_participants(bookmark_id) do
     require Ash.Query
 
-    Fate.Game.BranchParticipant
-    |> Ash.Query.filter(branch_id: branch_id)
+    Fate.Game.BookmarkParticipant
+    |> Ash.Query.filter(bookmark_id: bookmark_id)
     |> Ash.Query.load(:participant)
     |> Ash.read!()
   rescue
@@ -1425,12 +1492,12 @@ defmodule FateWeb.TableLive do
   end
 
   defp active_scene_id(nil), do: "none"
+  defp active_scene_id(state), do: state.head_event_id || "none"
 
-  defp active_scene_id(state) do
-    case Enum.find(state.scenes, &(&1.status == :active)) do
-      nil -> "none"
-      scene -> scene.id
-    end
+  defp find_default_scene(state) do
+    state.scenes
+    |> Enum.filter(&(&1.status == :active))
+    |> List.last()
   end
 
   defp visible_uncontrolled_entities(state, _is_gm) do
@@ -1479,7 +1546,6 @@ defmodule FateWeb.TableLive do
 
   defp find_scene_aspect(state, aspect_id) do
     state.scenes
-    |> Enum.filter(&(&1.status == :active))
     |> Enum.flat_map(fn scene ->
       scene.aspects ++ Enum.flat_map(scene.zones, & &1.aspects)
     end)
@@ -1537,13 +1603,11 @@ defmodule FateWeb.TableLive do
     end)
   end
 
-  defp scene_aspects(state, is_gm) do
+  defp scene_aspects(state, is_gm, scene_id) do
     state.scenes
-    |> Enum.filter(&(&1.status == :active))
+    |> Enum.filter(&(&1.id == scene_id))
     |> Enum.flat_map(fn scene ->
-      scene_aspects = scene.aspects
-      zone_aspects = Enum.flat_map(scene.zones, & &1.aspects)
-      scene_aspects ++ zone_aspects
+      scene.aspects ++ Enum.flat_map(scene.zones, & &1.aspects)
     end)
     |> Enum.filter(fn aspect ->
       is_gm || !aspect.hidden

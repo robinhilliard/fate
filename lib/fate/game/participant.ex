@@ -16,7 +16,7 @@ defmodule Fate.Game.Participant do
   end
 
   relationships do
-    has_many :branch_participants, Fate.Game.BranchParticipant
+    has_many :bookmark_participants, Fate.Game.BookmarkParticipant
   end
 
   actions do

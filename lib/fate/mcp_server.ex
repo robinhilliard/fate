@@ -10,19 +10,16 @@ defmodule Fate.McpServer do
 
   @impl true
   def init(args) do
-    branch_id = Keyword.get(args, :branch_id) || args[:branch_id] || find_active_branch()
-    {:ok, %{branch_id: branch_id}}
+    bookmark_id = Keyword.get(args, :bookmark_id) || args[:bookmark_id] || find_active_bookmark()
+    {:ok, %{bookmark_id: bookmark_id}}
   end
 
-  defp find_active_branch do
-    case Ash.read(Fate.Game.Branch, filter: [status: :active], load: [:head_event]) do
-      {:ok, branches} when branches != [] ->
-        branches
-        |> Enum.max_by(fn b -> b.head_event && b.head_event.timestamp end, DateTime, fn -> nil end)
-        |> Map.get(:id)
+  defp find_active_bookmark do
+    require Ash.Query
 
-      _ ->
-        nil
+    case Ash.read(Fate.Game.Bookmark |> Ash.Query.filter(status: :active) |> Ash.Query.sort(created_at: :desc)) do
+      {:ok, [latest | _]} -> latest.id
+      _ -> nil
     end
   end
 
@@ -166,31 +163,42 @@ defmodule Fate.McpServer do
       },
       %{
         name: "fork_from_bookmark",
-        description: "Create a new branch starting from a bookmarked event. Use for what-if exploration — e.g. try different character builds, then pick one.",
+        description: "Create a new bookmark forked from an existing one. Use for what-if exploration.",
         input_schema: %{
           type: "object",
           properties: %{
             bookmark_name: %{type: "string", description: "Name of the bookmark to fork from"},
-            branch_name: %{type: "string", description: "Name for the new branch"}
+            new_name: %{type: "string", description: "Name for the new bookmark"}
           },
-          required: ["bookmark_name", "branch_name"]
+          required: ["bookmark_name", "new_name"]
         }
       },
       %{
-        name: "switch_branch",
-        description: "Switch the MCP server to operate on a different branch",
+        name: "switch_bookmark",
+        description: "Switch the MCP server to operate on a different bookmark",
         input_schema: %{
           type: "object",
           properties: %{
-            branch_id: %{type: "string", description: "Branch ID to switch to"},
-            branch_name: %{type: "string", description: "Or find by name instead of ID"}
+            bookmark_id: %{type: "string", description: "Bookmark ID to switch to"},
+            bookmark_name: %{type: "string", description: "Or find by name instead of ID"}
           }
         }
       },
       %{
-        name: "list_branches",
-        description: "List all branches with their status and head event timestamp",
+        name: "list_bookmarks",
+        description: "List all bookmarks with their status",
         input_schema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "delete_bookmark",
+        description: "Delete (archive) a bookmark by ID or name",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            bookmark_id: %{type: "string", description: "Bookmark ID"},
+            bookmark_name: %{type: "string", description: "Or find by name"}
+          }
+        }
       },
       %{
         name: "create_scene",
@@ -257,7 +265,7 @@ defmodule Fate.McpServer do
 
   @impl true
   def handle_call_tool("get_game", _args, state) do
-    with {:ok, derived} <- Engine.derive_state(state.branch_id) do
+    with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       summary = %{
         campaign_name: derived.campaign_name,
         system: derived.system,
@@ -275,7 +283,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("list_entities", args, state) do
-    with {:ok, derived} <- Engine.derive_state(state.branch_id) do
+    with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       kind_filter = args["kind"]
 
       entities =
@@ -296,7 +304,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("get_entity", %{"entity_id" => entity_id}, state) do
-    with {:ok, derived} <- Engine.derive_state(state.branch_id) do
+    with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       case Map.get(derived.entities, entity_id) do
         nil -> {:ok, [%{type: "text", text: "Entity not found: #{entity_id}"}], state}
         entity -> {:ok, [%{type: "text", text: Jason.encode!(entity_detail(entity), pretty: true)}], state}
@@ -305,7 +313,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("list_scenes", _args, state) do
-    with {:ok, derived} <- Engine.derive_state(state.branch_id) do
+    with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       scenes = Enum.map(derived.scenes, &scene_detail/1)
       {:ok, [%{type: "text", text: Jason.encode!(scenes, pretty: true)}], state}
     end
@@ -314,8 +322,9 @@ defmodule Fate.McpServer do
   def handle_call_tool("get_action_log", args, state) do
     limit = args["limit"] || 20
 
-    with {:ok, branch} <- Ash.get(Fate.Game.Branch, state.branch_id),
-         {:ok, events} <- Engine.load_event_chain(branch.head_event_id) do
+    with {:ok, bm} <- Ash.get(Fate.Game.Bookmark, state.bookmark_id, not_found_error?: false),
+         bm when bm != nil <- bm,
+         {:ok, events} <- Engine.load_event_chain(bm.head_event_id) do
       recent = events |> Enum.take(-limit) |> Enum.map(&event_summary/1)
       {:ok, [%{type: "text", text: Jason.encode!(recent, pretty: true)}], state}
     else
@@ -336,7 +345,7 @@ defmodule Fate.McpServer do
       "stunts" => args["stunts"] || [], "stress_tracks" => args["stress_tracks"] || []
     }
 
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :entity_create,
       description: "Create #{args["name"]} (#{args["kind"]})",
       detail: detail
@@ -353,7 +362,7 @@ defmodule Fate.McpServer do
     entity_id = args["entity_id"]
     detail = Map.drop(args, ["entity_id"]) |> Map.put("entity_id", entity_id)
 
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :entity_modify, target_id: entity_id,
       description: "Modify entity #{entity_id}", detail: detail
     }) do
@@ -369,7 +378,7 @@ defmodule Fate.McpServer do
       "hidden" => args["hidden"] || false, "free_invokes" => args["free_invokes"] || 0
     }
 
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :aspect_create, target_id: args["target_id"],
       description: "Add aspect: #{args["description"]}", detail: detail
     }) do
@@ -381,7 +390,7 @@ defmodule Fate.McpServer do
   def handle_call_tool("set_skill", %{"entity_id" => entity_id, "skills" => skills}, state) do
     results =
       Enum.map(skills, fn {skill, rating} ->
-        Engine.append_event(state.branch_id, %{
+        Engine.append_event(state.bookmark_id, %{
           type: :skill_set, target_id: entity_id,
           description: "Set #{skill} to #{rating}",
           detail: %{"entity_id" => entity_id, "skill" => skill, "rating" => rating}
@@ -399,7 +408,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("add_stunt", args, state) do
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :stunt_add, target_id: args["entity_id"],
       description: "Add stunt: #{args["name"]}",
       detail: %{"entity_id" => args["entity_id"], "name" => args["name"], "effect" => args["effect"]}
@@ -416,7 +425,7 @@ defmodule Fate.McpServer do
       "aspects" => Enum.map(args["aspects"] || [], fn a -> Map.put_new(a, "role", "situation") end)
     }
 
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :scene_start, description: "Start scene: #{args["name"]}", detail: detail
     }) do
       {:ok, _, _} ->
@@ -428,28 +437,40 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("create_bookmark", args, state) do
-    with {:ok, branch} <- Ash.get(Fate.Game.Branch, state.branch_id),
+    with {:ok, parent} <- Ash.get(Fate.Game.Bookmark, state.bookmark_id, not_found_error?: false),
+         parent when parent != nil <- parent,
+         {:ok, bmk_event} <- Ash.create(Fate.Game.Event, %{
+           parent_id: parent.head_event_id,
+           type: :bookmark_create,
+           description: args["name"],
+           detail: %{"name" => args["name"]}
+         }, action: :append),
          {:ok, bookmark} <- Ash.create(Fate.Game.Bookmark, %{
            name: args["name"],
            description: args["description"],
-           event_id: branch.head_event_id
+           head_event_id: bmk_event.id,
+           parent_bookmark_id: parent.id
          }, action: :create) do
-      {:ok, [%{type: "text", text: "Bookmarked '#{args["name"]}' at event #{bookmark.event_id}"}], state}
+      {:ok, [%{type: "text", text: "Created bookmark '#{args["name"]}' (#{bookmark.id})"}], state}
     else
       {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
+      _ -> {:error, %{code: -32000, message: "Failed to create bookmark"}, state}
     end
   end
 
   def handle_call_tool("list_bookmarks", _args, state) do
-    case Ash.read(Fate.Game.Bookmark, load: [:event]) do
+    case Ash.read(Fate.Game.Bookmark, load: [:head_event]) do
       {:ok, bookmarks} ->
         list = Enum.map(bookmarks, fn b ->
           %{
             id: b.id,
             name: b.name,
             description: b.description,
-            event_id: b.event_id,
-            created_at: b.created_at
+            head_event_id: b.head_event_id,
+            parent_bookmark_id: b.parent_bookmark_id,
+            status: b.status,
+            created_at: b.created_at,
+            current: b.id == state.bookmark_id
           }
         end)
         {:ok, [%{type: "text", text: Jason.encode!(list, pretty: true)}], state}
@@ -461,15 +482,22 @@ defmodule Fate.McpServer do
 
   def handle_call_tool("fork_from_bookmark", args, state) do
     bookmark_name = args["bookmark_name"]
-    branch_name = args["branch_name"]
+    new_name = args["new_name"] || "Fork: #{bookmark_name}"
 
     with {:ok, bookmarks} <- Ash.read(Fate.Game.Bookmark, filter: [name: bookmark_name]),
-         %Fate.Game.Bookmark{} = bookmark <- List.first(bookmarks) || {:error, :not_found},
-         {:ok, branch} <- Ash.create(Fate.Game.Branch, %{
-           name: branch_name,
-           head_event_id: bookmark.event_id
+         %Fate.Game.Bookmark{} = parent <- List.first(bookmarks) || {:error, :not_found},
+         {:ok, bmk_event} <- Ash.create(Fate.Game.Event, %{
+           parent_id: parent.head_event_id,
+           type: :bookmark_create,
+           description: new_name,
+           detail: %{"name" => new_name}
+         }, action: :append),
+         {:ok, new_bm} <- Ash.create(Fate.Game.Bookmark, %{
+           name: new_name,
+           head_event_id: bmk_event.id,
+           parent_bookmark_id: parent.id
          }, action: :create) do
-      {:ok, [%{type: "text", text: "Created branch '#{branch_name}' (#{branch.id}) forked from bookmark '#{bookmark_name}'"}], state}
+      {:ok, [%{type: "text", text: "Created bookmark '#{new_name}' (#{new_bm.id}) forked from '#{bookmark_name}'"}], state}
     else
       {:error, :not_found} ->
         {:error, %{code: -32000, message: "Bookmark '#{bookmark_name}' not found"}, state}
@@ -479,17 +507,17 @@ defmodule Fate.McpServer do
     end
   end
 
-  def handle_call_tool("switch_branch", args, state) do
-    branch =
+  def handle_call_tool("switch_bookmark", args, state) do
+    bookmark =
       cond do
-        args["branch_id"] ->
-          case Ash.get(Fate.Game.Branch, args["branch_id"]) do
+        args["bookmark_id"] ->
+          case Ash.get(Fate.Game.Bookmark, args["bookmark_id"], not_found_error?: false) do
             {:ok, b} -> b
             _ -> nil
           end
 
-        args["branch_name"] ->
-          case Ash.read(Fate.Game.Branch, filter: [name: args["branch_name"]]) do
+        args["bookmark_name"] ->
+          case Ash.read(Fate.Game.Bookmark, filter: [name: args["bookmark_name"]]) do
             {:ok, [b | _]} -> b
             _ -> nil
           end
@@ -498,38 +526,18 @@ defmodule Fate.McpServer do
           nil
       end
 
-    case branch do
+    case bookmark do
       nil ->
-        {:error, %{code: -32000, message: "Branch not found"}, state}
+        {:error, %{code: -32000, message: "Bookmark not found"}, state}
 
       b ->
-        new_state = %{state | branch_id: b.id}
-        {:ok, [%{type: "text", text: "Switched to branch '#{b.name}' (#{b.id})"}], new_state}
-    end
-  end
-
-  def handle_call_tool("list_branches", _args, state) do
-    case Ash.read(Fate.Game.Branch, load: [:head_event]) do
-      {:ok, branches} ->
-        list = Enum.map(branches, fn b ->
-          %{
-            id: b.id,
-            name: b.name,
-            status: b.status,
-            head_event_id: b.head_event_id,
-            head_timestamp: b.head_event && b.head_event.timestamp,
-            current: b.id == state.branch_id
-          }
-        end)
-        {:ok, [%{type: "text", text: Jason.encode!(list, pretty: true)}], state}
-
-      _ ->
-        {:ok, [%{type: "text", text: "[]"}], state}
+        new_state = %{state | bookmark_id: b.id}
+        {:ok, [%{type: "text", text: "Switched to bookmark '#{b.name}' (#{b.id})"}], new_state}
     end
   end
 
   def handle_call_tool("remove_entity", %{"entity_id" => entity_id}, state) do
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :entity_remove,
       target_id: entity_id,
       description: "Remove entity"
@@ -540,7 +548,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("stress_apply", %{"entity_id" => entity_id, "track_label" => track_label, "box_index" => box_index}, state) do
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :stress_apply,
       target_id: entity_id,
       description: "Stress #{track_label} box #{box_index}",
@@ -552,7 +560,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("consequence_take", %{"entity_id" => entity_id, "severity" => severity, "aspect_text" => aspect_text}, state) do
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :consequence_take,
       target_id: entity_id,
       description: "#{severity}: #{aspect_text}",
@@ -564,7 +572,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("concede", %{"entity_id" => entity_id}, state) do
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :concede,
       actor_id: entity_id,
       description: "Concede"
@@ -577,7 +585,7 @@ defmodule Fate.McpServer do
   def handle_call_tool("entity_move", %{"entity_id" => entity_id} = args, state) do
     zone_id = args["zone_id"]
 
-    case Engine.append_event(state.branch_id, %{
+    case Engine.append_event(state.bookmark_id, %{
       type: :entity_move,
       actor_id: entity_id,
       description: if(zone_id, do: "Move to zone", else: "Leave zone"),
@@ -585,6 +593,36 @@ defmodule Fate.McpServer do
     }) do
       {:ok, _state, _event} -> {:ok, [%{type: "text", text: if(zone_id, do: "Moved to zone", else: "Left zone")}], state}
       _ -> {:error, %{code: -32000, message: "Failed to move entity"}, state}
+    end
+  end
+
+  def handle_call_tool("delete_bookmark", args, state) do
+    bookmark =
+      cond do
+        args["bookmark_id"] ->
+          case Ash.get(Fate.Game.Bookmark, args["bookmark_id"], not_found_error?: false) do
+            {:ok, b} -> b
+            _ -> nil
+          end
+
+        args["bookmark_name"] ->
+          case Ash.read(Fate.Game.Bookmark, filter: [name: args["bookmark_name"]]) do
+            {:ok, [b | _]} -> b
+            _ -> nil
+          end
+
+        true ->
+          nil
+      end
+
+    case bookmark do
+      nil ->
+        {:error, %{code: -32000, message: "Bookmark not found"}, state}
+
+      b ->
+        Ash.update!(b, %{status: :archived}, action: :set_status)
+        new_state = if state.bookmark_id == b.id, do: %{state | bookmark_id: nil}, else: state
+        {:ok, [%{type: "text", text: "Archived bookmark '#{b.name}' (#{b.id})"}], new_state}
     end
   end
 
@@ -605,7 +643,7 @@ defmodule Fate.McpServer do
 
   @impl true
   def handle_read_resource("fate://game/state", state) do
-    case Engine.derive_state(state.branch_id) do
+    case Engine.derive_state(state.bookmark_id) do
       {:ok, derived} ->
         summary = %{
           campaign_name: derived.campaign_name, system: derived.system,

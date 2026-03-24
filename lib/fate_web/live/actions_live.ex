@@ -48,9 +48,11 @@ defmodule FateWeb.ActionsLive do
   def mount(_params, _session, socket) do
     socket =
       socket
-      |> assign(:branch_id, nil)
+      |> assign(:bookmark_id, nil)
       |> assign(:events, [])
       |> assign(:state, nil)
+      |> assign(:is_gm, is_localhost?(socket))
+      |> assign(:log_tab, :bookmarks)
       |> assign(:selection, [])
       |> assign(:building, nil)
       |> assign(:build_steps, [])
@@ -63,28 +65,29 @@ defmodule FateWeb.ActionsLive do
   end
 
   @impl true
-  def handle_params(%{"branch_id" => branch_id}, _uri, socket) do
+  def handle_params(%{"bookmark_id" => bookmark_id}, _uri, socket) do
     if connected?(socket) do
-      Engine.subscribe(branch_id)
-      Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{branch_id}")
-      Phoenix.PubSub.subscribe(Fate.PubSub, "exchange:#{branch_id}")
+      Engine.subscribe(bookmark_id)
+      Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{bookmark_id}")
+      Phoenix.PubSub.subscribe(Fate.PubSub, "exchange:#{bookmark_id}")
 
-      with {:ok, state} <- Engine.derive_state(branch_id),
-           {:ok, events} <- Engine.load_event_chain(get_head_event_id(branch_id)) do
+      with {:ok, state} <- Engine.derive_state(bookmark_id) do
+        events = load_events_for_role(bookmark_id, socket.assigns.is_gm)
+
         {:noreply,
          socket
-         |> assign(:branch_id, branch_id)
+         |> assign(:bookmark_id, bookmark_id)
          |> assign(:events, events)
          |> assign(:state, state)}
       else
         _ ->
           {:noreply,
            socket
-           |> assign(:branch_id, branch_id)
-           |> put_flash(:error, "Could not load branch")}
+           |> assign(:bookmark_id, bookmark_id)
+           |> put_flash(:error, "Could not load bookmark")}
       end
     else
-      {:noreply, assign(socket, :branch_id, branch_id)}
+      {:noreply, assign(socket, :bookmark_id, bookmark_id)}
     end
   end
 
@@ -92,13 +95,12 @@ defmodule FateWeb.ActionsLive do
 
   @impl true
   def handle_info({:state_updated, state}, socket) do
-    case Engine.load_event_chain(get_head_event_id(socket.assigns.branch_id)) do
-      {:ok, events} ->
-        {:noreply, socket |> assign(:state, state) |> assign(:events, events)}
+    events = load_events_for_role(socket.assigns.bookmark_id, socket.assigns.is_gm)
 
-      _ ->
-        {:noreply, assign(socket, :state, state)}
-    end
+    {:noreply,
+     socket
+     |> assign(:state, state)
+     |> assign(:events, events)}
   end
 
   def handle_info({:selection_updated, selection}, socket) do
@@ -110,6 +112,17 @@ defmodule FateWeb.ActionsLive do
      socket
      |> assign(:building, building)
      |> assign(:build_steps, build_steps)}
+  end
+
+  def handle_event("fork_bookmark", %{"bookmark-id" => bookmark_id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:modal, "fork_bookmark")
+     |> assign(:fork_bookmark_id, bookmark_id)}
+  end
+
+  def handle_event("set_log_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, :log_tab, String.to_existing_atom(tab))}
   end
 
   @impl true
@@ -264,7 +277,7 @@ defmodule FateWeb.ActionsLive do
   end
 
   def handle_event("commit_exchange", _params, socket) do
-    branch_id = socket.assigns.branch_id
+    branch_id = socket.assigns.bookmark_id
     exchange_id = Ash.UUID.generate()
 
     Enum.reduce_while(socket.assigns.build_steps, {:ok, nil}, fn step, _acc ->
@@ -335,7 +348,7 @@ defmodule FateWeb.ActionsLive do
               _ -> {"entity", params["target_id"]}
             end
 
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :aspect_create,
             target_id: target_id,
             description: "Add aspect: #{params["description"]}",
@@ -349,7 +362,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "aspect_compel" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :aspect_compel,
             actor_id: params["actor_id"],
             target_id: params["target_id"],
@@ -361,7 +374,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "entity_move" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :entity_move,
             actor_id: params["entity_id"],
             description: "Move to #{params["zone_name"] || "zone"}",
@@ -369,7 +382,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "scene_start" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :scene_start,
             description: "Start scene: #{params["name"]}",
             detail: %{
@@ -383,7 +396,7 @@ defmodule FateWeb.ActionsLive do
         "scene_end" ->
           active = socket.assigns.state.scenes |> Enum.find(&(&1.status == :active))
           if active do
-            Engine.append_event(socket.assigns.branch_id, %{
+            Engine.append_event(socket.assigns.bookmark_id, %{
               type: :scene_end,
               description: "End scene: #{active.name}",
               detail: %{"scene_id" => active.id}
@@ -393,7 +406,7 @@ defmodule FateWeb.ActionsLive do
           end
 
         "fate_point_spend" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :fate_point_spend,
             target_id: params["entity_id"],
             description: "Spend fate point",
@@ -401,7 +414,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "fate_point_earn" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :fate_point_earn,
             target_id: params["entity_id"],
             description: "Earn fate point",
@@ -409,7 +422,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "fate_point_refresh" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :fate_point_refresh,
             target_id: params["entity_id"],
             description: "Refresh fate points",
@@ -417,7 +430,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "entity_create" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :entity_create,
             description: "Create #{params["name"]}",
             detail: %{
@@ -439,7 +452,7 @@ defmodule FateWeb.ActionsLive do
             |> maybe_put_int("fate_points", params["fate_points"])
             |> maybe_put_int("refresh", params["refresh"])
 
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :entity_modify,
             target_id: params["entity_id"],
             description: "Edit #{params["name"] || "entity"}",
@@ -447,7 +460,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "skill_set" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :skill_set,
             target_id: params["entity_id"],
             description: "#{params["skill"]} → +#{params["rating"]}",
@@ -459,7 +472,7 @@ defmodule FateWeb.ActionsLive do
           })
 
         "stunt_add" ->
-          Engine.append_event(socket.assigns.branch_id, %{
+          Engine.append_event(socket.assigns.bookmark_id, %{
             type: :stunt_add,
             target_id: params["entity_id"],
             description: "Stunt: #{params["name"]}",
@@ -471,11 +484,37 @@ defmodule FateWeb.ActionsLive do
             }
           })
 
+        "fork_bookmark" ->
+          bookmark_id = socket.assigns[:fork_bookmark_id]
+
+          case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
+            {:ok, %{head_event_id: head_id} = parent} when head_id != nil ->
+              with {:ok, bmk_event} <- Ash.create(Fate.Game.Event, %{
+                     parent_id: head_id,
+                     type: :bookmark_create,
+                     description: params["name"],
+                     detail: %{"name" => params["name"]}
+                   }, action: :append),
+                   {:ok, new_bm} <- Ash.create(Fate.Game.Bookmark, %{
+                     name: params["name"],
+                     head_event_id: bmk_event.id,
+                     parent_bookmark_id: parent.id
+                   }, action: :create) do
+                {:ok, nil, new_bm}
+              end
+
+            _ ->
+              {:error, "Bookmark not found"}
+          end
+
         _ ->
           {:error, "Unknown modal type"}
       end
 
     case result do
+      {:ok, nil, %Fate.Game.Bookmark{id: new_bm_id}} ->
+        {:noreply, push_navigate(socket, to: ~p"/table/#{new_bm_id}")}
+
       {:ok, _state, _event} ->
         {:noreply, socket |> assign(:modal, nil) |> assign(:form_data, %{})}
 
@@ -485,17 +524,18 @@ defmodule FateWeb.ActionsLive do
   end
 
   def handle_event("delete_event", %{"id" => event_id}, socket) do
-    case Ash.get(Fate.Game.Event, event_id) do
-      {:ok, event} ->
+    case Ash.get(Fate.Game.Event, event_id, not_found_error?: false) do
+      {:ok, event} when event != nil ->
         Ash.destroy!(event, action: :delete)
 
-        case Engine.load_event_chain(get_head_event_id(socket.assigns.branch_id)) do
-          {:ok, events} ->
-            {:ok, state} = Engine.derive_state(socket.assigns.branch_id)
+        events = load_events_for_role(socket.assigns.bookmark_id, socket.assigns.is_gm)
+
+        case Engine.derive_state(socket.assigns.bookmark_id) do
+          {:ok, state} ->
             {:noreply, socket |> assign(:events, events) |> assign(:state, state)}
 
           _ ->
-            {:noreply, socket}
+            {:noreply, assign(socket, :events, events)}
         end
 
       _ ->
@@ -509,7 +549,7 @@ defmodule FateWeb.ActionsLive do
     <div class="flex h-screen relative" style="background: #1a1410; color: #e8dcc8;">
       <%!-- Window switcher --%>
       <a
-        href={~p"/table/#{@branch_id || ""}"}
+        href={~p"/table/#{@bookmark_id || ""}"}
         target="fate-table"
         class="absolute bottom-3 right-3 z-50 px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
         style="font-family: 'Patrick Hand', cursive;"
@@ -519,46 +559,83 @@ defmodule FateWeb.ActionsLive do
 
       <%!-- Modal overlay --%>
       <.action_modal modal={@modal} state={@state} prefill_entity_id={@prefill_entity_id} />
-      <%!-- Event Log (left panel) --%>
+      <%!-- Left panel: Event Log / Bookmarks tabs --%>
       <div class="w-1/2 border-r border-amber-900/30 flex flex-col">
         <div class="p-4 border-b border-amber-900/30">
-          <h2 class="text-xl font-bold" style="font-family: 'Permanent Marker', cursive;">
-            Event Log
-          </h2>
-          <p class="text-amber-200/40 text-sm mt-1">
-            {length(@events)} events on this branch
-          </p>
-        </div>
-
-        <div class="flex-1 overflow-y-auto p-3 space-y-1" id="event-log">
-          <%= if @events == [] do %>
-            <div class="text-amber-200/30 text-center py-8">No events yet</div>
-          <% else %>
-            <%= for {event, index} <- @events |> Enum.reverse() |> Enum.with_index() do %>
-              <.event_row event={event} index={length(@events) - 1 - index} state={@state} />
-            <% end %>
+          <div class="flex gap-4 mb-2">
+            <button
+              phx-click="set_log_tab"
+              phx-value-tab="bookmarks"
+              class={["text-lg font-bold transition", if(@log_tab == :bookmarks, do: "text-amber-100", else: "text-amber-200/30 hover:text-amber-200/60")]}
+              style="font-family: 'Permanent Marker', cursive;"
+            >
+              Bookmarks
+            </button>
+            <button
+              phx-click="set_log_tab"
+              phx-value-tab="events"
+              class={["text-lg font-bold transition", if(@log_tab == :events, do: "text-amber-100", else: "text-amber-200/30 hover:text-amber-200/60")]}
+              style="font-family: 'Permanent Marker', cursive;"
+            >
+              Events
+            </button>
+          </div>
+          <%= if @log_tab == :events do %>
+            <p class="text-amber-200/40 text-sm">{length(@events)} events</p>
           <% end %>
         </div>
+
+        <%= if @log_tab == :events do %>
+          <% boundary = bookmark_boundary_index(@events) %>
+          <div class="flex-1 overflow-y-auto p-3 space-y-1" id="event-log">
+            <%= if @events == [] do %>
+              <div class="text-amber-200/30 text-center py-8">No events yet</div>
+            <% else %>
+              <%= for {event, index} <- @events |> Enum.reverse() |> Enum.with_index() do %>
+                <% real_index = length(@events) - 1 - index %>
+                <.event_row event={event} index={real_index} state={@state} immutable={real_index <= boundary} />
+              <% end %>
+            <% end %>
+          </div>
+        <% else %>
+          <div class="flex-1 overflow-y-auto p-3" id="bookmark-tree">
+            <.bookmark_tree bookmark_id={@bookmark_id} />
+          </div>
+        <% end %>
       </div>
 
-      <%!-- Action Palette (right panel) --%>
+      <%!-- Right panel --%>
       <div class="w-1/2 flex flex-col">
+        <%= if @log_tab == :bookmarks do %>
+          <div class="flex-1 overflow-y-auto p-6">
+            <h2 class="text-xl font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
+              Managing Bookmarks
+            </h2>
+            <div class="space-y-3 text-sm text-amber-200/60" style="font-family: 'Patrick Hand', cursive; font-size: 1.1rem; line-height: 1.6;">
+              <p>Bookmarks organize your games as a tree. Each bookmark is a snapshot of game state that can branch into new timelines.</p>
+              <p>
+                <span class="text-amber-100">Create Bookmark</span> —
+                Click the <.icon name="hero-plus-circle" class="w-4 h-4 inline text-green-400/60" /> button on any bookmark to create a child. The child inherits all entities, scenes, and aspects from the parent.
+              </p>
+              <p>
+                <span class="text-amber-100">Navigate</span> —
+                Click a bookmark name to open it on the table. Only leaf bookmarks (those without children) can be opened.
+              </p>
+              <p>
+                <span class="text-amber-100">Locked bookmarks</span> —
+                Once a bookmark has children, it becomes locked (<.icon name="hero-lock-closed" class="w-3.5 h-3.5 inline text-amber-400/30" />). Its events are immutable — they form the shared foundation for all child timelines.
+              </p>
+              <p>
+                <span class="text-amber-100">Typical workflow</span> —
+                Create entities and scenes under a prep bookmark. When ready to play, create a child bookmark for your game session. If you want to replay the same setup with different players, create another child from the same prep bookmark.
+              </p>
+            </div>
+          </div>
+        <% else %>
         <div class="p-4 border-b border-amber-900/30">
           <h2 class="text-xl font-bold" style="font-family: 'Permanent Marker', cursive;">
             Action Palette
           </h2>
-
-          <%!-- Cross-window selection pills --%>
-          <%= if @selection != [] do %>
-            <div class="flex flex-wrap gap-1 mt-2">
-              <span class="text-xs text-amber-200/50">Selected:</span>
-              <%= for item <- @selection do %>
-                <span class="px-2 py-0.5 bg-yellow-900/50 text-yellow-200 text-xs rounded-full border border-yellow-600/30">
-                  {item.type}: {short_id(item.id)}
-                </span>
-              <% end %>
-            </div>
-          <% end %>
         </div>
 
         <div class="flex-1 overflow-y-auto p-4">
@@ -576,6 +653,7 @@ defmodule FateWeb.ActionsLive do
             <.action_menu state={@state} />
           <% end %>
         </div>
+        <% end %>
       </div>
     </div>
     """
@@ -591,12 +669,16 @@ defmodule FateWeb.ActionsLive do
       assigns
       |> assign(:color, color)
       |> assign(:summary, summary)
+      |> assign_new(:immutable, fn -> false end)
 
     ~H"""
     <div
       id={"event-#{@index}"}
-      class={"group flex items-center gap-2 px-2 py-1 rounded hover:bg-amber-900/20 transition text-sm
-        #{if @event.exchange_id, do: "ml-4 border-l-2 border-amber-700/20", else: ""}"}
+      class={[
+        "group flex items-center gap-2 px-2 py-1 rounded transition text-sm",
+        if(@event.exchange_id, do: "ml-4 border-l-2 border-amber-700/20", else: ""),
+        if(@immutable, do: "opacity-30", else: "hover:bg-amber-900/20")
+      ]}
     >
       <div
         class="w-2 h-2 rounded-full shrink-0"
@@ -606,14 +688,16 @@ defmodule FateWeb.ActionsLive do
       <span class="flex-1 text-amber-100/80 truncate" style="font-family: 'Patrick Hand', cursive;">
         {@summary}
       </span>
-      <button
-        phx-click="delete_event"
-        phx-value-id={@event.id}
-        class="opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 text-xs transition shrink-0"
-        data-confirm="Delete this event?"
-      >
-        ✕
-      </button>
+      <%= unless @immutable do %>
+        <button
+          phx-click="delete_event"
+          phx-value-id={@event.id}
+          class="opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 text-xs transition shrink-0"
+          data-confirm="Delete this event?"
+        >
+          ✕
+        </button>
+      <% end %>
     </div>
     """
   end
@@ -1196,11 +1280,114 @@ defmodule FateWeb.ActionsLive do
     end)
   end
 
-  defp get_head_event_id(branch_id) do
-    case Ash.get(Fate.Game.Branch, branch_id, not_found_error?: false) do
-      {:ok, %{head_event_id: id}} -> id
-      _ -> nil
+  defp load_events_for_role(bookmark_id, true = _is_gm) do
+    case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
+      {:ok, %{head_event_id: head_id}} when head_id != nil ->
+        case Engine.load_event_chain(head_id) do
+          {:ok, events} -> events
+          _ -> []
+        end
+
+      _ ->
+        []
     end
+  end
+
+  defp load_events_for_role(bookmark_id, false = _is_gm) do
+    case Engine.load_player_events(bookmark_id) do
+      {:ok, events} -> events
+      _ -> []
+    end
+  end
+
+  defp is_localhost?(socket) do
+    case get_connect_info(socket, :peer_data) do
+      %{address: {127, 0, 0, 1}} -> true
+      %{address: {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp bookmark_tree(assigns) do
+    require Ash.Query
+
+    bookmarks =
+      case Ash.read(Fate.Game.Bookmark |> Ash.Query.filter(status: :active) |> Ash.Query.sort(created_at: :asc)) do
+        {:ok, bms} -> bms
+        _ -> []
+      end
+
+    top_level = Enum.filter(bookmarks, &is_nil(&1.parent_bookmark_id))
+    children_map = Enum.group_by(bookmarks, & &1.parent_bookmark_id)
+
+    assigns = assigns |> assign(:top_level, top_level) |> assign(:children_map, children_map)
+
+    ~H"""
+    <%= if @top_level == [] do %>
+      <div class="text-amber-200/30 text-center py-8">No bookmarks yet</div>
+    <% else %>
+      <div class="space-y-1">
+        <%= for bm <- @top_level do %>
+          <.bookmark_node bookmark={bm} children_map={@children_map} current_id={@bookmark_id} depth={0} />
+        <% end %>
+      </div>
+    <% end %>
+    """
+  end
+
+  defp bookmark_node(assigns) do
+    children = Map.get(assigns.children_map, assigns.bookmark.id, [])
+    has_children = children != []
+    assigns = assigns |> assign(:children, children) |> assign(:has_children, has_children)
+
+    ~H"""
+    <div style={"margin-left: #{@depth * 16}px;"}>
+      <div class={[
+        "flex items-center gap-2 px-2 py-1.5 rounded transition text-sm",
+        if(@bookmark.id == @current_id, do: "bg-amber-800/40 border border-amber-600/30", else: "hover:bg-amber-900/20")
+      ]}>
+        <%= if @has_children do %>
+          <.icon name="hero-lock-closed" class="w-3.5 h-3.5 text-amber-400/30 shrink-0" />
+          <span class="flex-1 text-amber-200/40 truncate" style="font-family: 'Patrick Hand', cursive;">
+            {@bookmark.name}
+          </span>
+        <% else %>
+          <.icon name="hero-bookmark" class="w-3.5 h-3.5 text-amber-400/60 shrink-0" />
+          <.link
+            navigate={~p"/table/#{@bookmark.id}"}
+            class="flex-1 text-amber-100 truncate hover:text-amber-200"
+            style="font-family: 'Patrick Hand', cursive;"
+          >
+            {@bookmark.name}
+          </.link>
+        <% end %>
+        <button
+          phx-click="fork_bookmark"
+          phx-value-bookmark-id={@bookmark.id}
+          class="text-xs text-green-400/40 hover:text-green-300 transition shrink-0"
+          data-tooltip="Create Bookmark"
+        >
+          <.icon name="hero-plus-circle" class="w-3.5 h-3.5" />
+        </button>
+        <span class="text-xs text-amber-200/25 shrink-0">
+          {Calendar.strftime(@bookmark.created_at, "%b %d")}
+        </span>
+      </div>
+      <%= for child <- @children do %>
+        <.bookmark_node bookmark={child} children_map={@children_map} current_id={@current_id} depth={@depth + 1} />
+      <% end %>
+    </div>
+    """
+  end
+
+  defp bookmark_boundary_index(events) do
+    events
+    |> Enum.with_index()
+    |> Enum.reduce(-1, fn {event, index}, acc ->
+      if event.type == :bookmark_create, do: index, else: acc
+    end)
   end
 
   defp entity_color(nil, _), do: "#6b7280"
@@ -1281,10 +1468,10 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp broadcast_exchange(socket) do
-    if socket.assigns.branch_id do
+    if socket.assigns.bookmark_id do
       Phoenix.PubSub.broadcast(
         Fate.PubSub,
-        "exchange:#{socket.assigns.branch_id}",
+        "exchange:#{socket.assigns.bookmark_id}",
         {:exchange_updated, %{building: socket.assigns.building, build_steps: socket.assigns.build_steps}}
       )
     end
@@ -1360,6 +1547,7 @@ defmodule FateWeb.ActionsLive do
   defp modal_title("entity_edit"), do: "Edit Entity"
   defp modal_title("skill_set"), do: "Set Skill"
   defp modal_title("stunt_add"), do: "Add Stunt"
+  defp modal_title("fork_bookmark"), do: "Create Bookmark"
   defp modal_title(other), do: other
 
   defp modal_fields(%{modal: "aspect_create"} = assigns) do
@@ -1524,6 +1712,12 @@ defmodule FateWeb.ActionsLive do
     <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
     <.text_input name="name" label="Stunt Name" placeholder="Master Swordswoman" />
     <.text_input name="effect" label="Effect" placeholder="+2 to Fight when dueling one-on-one" />
+    """
+  end
+
+  defp modal_fields(%{modal: "fork_bookmark"} = assigns) do
+    ~H"""
+    <.text_input name="name" label="Bookmark Name" placeholder="My Fork" />
     """
   end
 

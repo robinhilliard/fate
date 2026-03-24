@@ -55,7 +55,8 @@ defmodule Fate.Game.Event do
           :fate_point_refresh,
           :concede,
           :taken_out,
-          :mook_eliminate
+          :mook_eliminate,
+          :bookmark_create
         ]
       ]
 

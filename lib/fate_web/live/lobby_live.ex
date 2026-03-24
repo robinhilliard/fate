@@ -4,9 +4,8 @@ defmodule FateWeb.LobbyLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      branch_id = find_or_create_branch()
-
-      {:ok, push_navigate(socket, to: ~p"/table/#{branch_id}")}
+      bookmark_id = find_or_create_bookmark()
+      {:ok, push_navigate(socket, to: ~p"/table/#{bookmark_id}")}
     else
       {:ok, socket}
     end
@@ -26,40 +25,72 @@ defmodule FateWeb.LobbyLive do
     """
   end
 
-  defp find_or_create_branch do
-    case Ash.read(Fate.Game.Branch, filter: [status: :active], load: [:head_event]) do
-      {:ok, [_ | _] = branches} ->
-        branches
+  defp find_or_create_bookmark do
+    require Ash.Query
+
+    case Ash.read(Fate.Game.Bookmark
+         |> Ash.Query.filter(status: :active)
+         |> Ash.Query.load(:head_event)
+         |> Ash.Query.sort(created_at: :desc)) do
+      {:ok, [_ | _] = bookmarks} ->
+        bookmarks
+        |> Enum.filter(&leaf_bookmark?/1)
         |> Enum.max_by(fn b -> b.head_event && b.head_event.timestamp end, DateTime, fn -> nil end)
-        |> Map.get(:id)
+        |> case do
+          nil -> List.first(bookmarks) |> Map.get(:id)
+          b -> b.id
+        end
 
       _ ->
-        create_empty_branch()
+        bootstrap()
     end
   end
 
-  defp create_empty_branch do
-    alias Fate.Game.{Event, Branch, Participant, BranchParticipant}
+  defp leaf_bookmark?(bookmark) do
+    require Ash.Query
+
+    case Ash.read(Fate.Game.Bookmark |> Ash.Query.filter(parent_bookmark_id: bookmark.id, status: :active)) do
+      {:ok, []} -> true
+      _ -> false
+    end
+  end
+
+  defp bootstrap do
+    alias Fate.Game.{Event, Bookmark, Participant, BookmarkParticipant}
 
     with {:ok, gm} <- Ash.create(Participant, %{name: "GM", color: "#ef4444"}, action: :create),
-         {:ok, root} <- Ash.create(Event, %{
-           type: :create_campaign,
-           description: "New Campaign",
-           detail: %{"campaign_name" => "New Campaign"}
+         {:ok, root_bmk_event} <- Ash.create(Event, %{
+           type: :bookmark_create,
+           description: "New Game",
+           detail: %{"name" => "New Game"}
          }, action: :append),
-         {:ok, branch} <- Ash.create(Branch, %{
-           name: "Main",
-           head_event_id: root.id
+         {:ok, null_scene} <- Ash.create(Event, %{
+           parent_id: root_bmk_event.id,
+           type: :scene_start,
+           description: "Default scene",
+           detail: %{
+             "scene_id" => Ash.UUID.generate(),
+             "name" => nil,
+             "description" => nil,
+             "gm_notes" => "NO SCENE"
+           }
+         }, action: :append),
+         {:ok, root_bookmark} <- Ash.create(Bookmark, %{
+           name: "New Game",
+           head_event_id: null_scene.id
          }, action: :create),
-         {:ok, _bp} <- Ash.create(BranchParticipant, %{
-           branch_id: branch.id,
+         {:ok, _bp} <- Ash.create(BookmarkParticipant, %{
+           bookmark_id: root_bookmark.id,
            participant_id: gm.id,
            role: :gm,
            seat_index: 0
          }, action: :create) do
-      branch.id
+      case FateWeb.BranchesLive.create_demo_from_root(root_bookmark, gm) do
+        {:ok, demo_bookmark} -> demo_bookmark.id
+        _ -> root_bookmark.id
+      end
     else
-      _ -> raise "Failed to create initial branch"
+      _ -> raise "Failed to bootstrap"
     end
   end
 end

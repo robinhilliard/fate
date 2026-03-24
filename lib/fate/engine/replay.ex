@@ -20,14 +20,14 @@ defmodule Fate.Engine.Replay do
   Given a branch ID, head event ID, and an ordered list of events (root first),
   produces the derived game state.
   """
-  def derive(branch_id, events) do
+  def derive(bookmark_id, events) do
     head_event_id =
       case List.last(events) do
         nil -> nil
         event -> event.id
       end
 
-    initial = %DerivedState{branch_id: branch_id, head_event_id: head_event_id}
+    initial = %DerivedState{bookmark_id: bookmark_id, head_event_id: head_event_id}
 
     Enum.reduce(events, initial, &apply_event/2)
   end
