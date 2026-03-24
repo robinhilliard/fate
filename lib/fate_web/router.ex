@@ -17,7 +17,7 @@ defmodule FateWeb.Router do
   scope "/", FateWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", LobbyLive
     live "/branches", BranchesLive
     live "/table/:branch_id", TableLive
     live "/actions/:branch_id", ActionsLive
