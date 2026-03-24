@@ -524,18 +524,46 @@ defmodule FateWeb.ActionsLive do
   end
 
   def handle_event("delete_event", %{"id" => event_id}, socket) do
+    bookmark_id = socket.assigns.bookmark_id
+
     case Ash.get(Fate.Game.Event, event_id, not_found_error?: false) do
       {:ok, event} when event != nil ->
-        Ash.destroy!(event, action: :delete)
-
-        events = load_events_for_role(socket.assigns.bookmark_id, socket.assigns.is_gm)
-
-        case Engine.derive_state(socket.assigns.bookmark_id) do
-          {:ok, state} ->
-            {:noreply, socket |> assign(:events, events) |> assign(:state, state)}
+        case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
+          {:ok, bookmark} when bookmark != nil ->
+            if bookmark.head_event_id == event_id do
+              Ash.update!(bookmark, %{head_event_id: event.parent_id}, action: :advance_head)
+            end
 
           _ ->
-            {:noreply, assign(socket, :events, events)}
+            :ok
+        end
+
+        require Ash.Query
+        case Ash.read(Fate.Game.Event |> Ash.Query.filter(parent_id: event_id)) do
+          {:ok, children} ->
+            Enum.each(children, fn child ->
+              Ash.update!(child, %{parent_id: event.parent_id}, action: :edit)
+            end)
+
+          _ ->
+            :ok
+        end
+
+        case Ash.destroy(event, action: :delete) do
+          :ok ->
+            events = load_events_for_role(bookmark_id, socket.assigns.is_gm)
+
+            case Engine.derive_state(bookmark_id) do
+              {:ok, state} ->
+                Phoenix.PubSub.broadcast(Fate.PubSub, "bookmark:#{bookmark_id}", {:state_updated, state})
+                {:noreply, socket |> assign(:events, events) |> assign(:state, state)}
+
+              _ ->
+                {:noreply, assign(socket, :events, events)}
+            end
+
+          {:error, _reason} ->
+            {:noreply, put_flash(socket, :error, "Cannot delete: other events depend on this one")}
         end
 
       _ ->

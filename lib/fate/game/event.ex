@@ -92,7 +92,7 @@ defmodule Fate.Game.Event do
     end
 
     update :edit do
-      accept [:type, :actor_id, :target_id, :description, :detail]
+      accept [:parent_id, :type, :actor_id, :target_id, :description, :detail]
     end
 
     destroy :delete
