@@ -67,6 +67,7 @@ defmodule FateWeb.ActionsLive do
     if connected?(socket) do
       Engine.subscribe(branch_id)
       Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{branch_id}")
+      Phoenix.PubSub.subscribe(Fate.PubSub, "exchange:#{branch_id}")
 
       with {:ok, state} <- Engine.derive_state(branch_id),
            {:ok, events} <- Engine.load_event_chain(get_head_event_id(branch_id)) do
@@ -104,22 +105,34 @@ defmodule FateWeb.ActionsLive do
     {:noreply, assign(socket, :selection, selection)}
   end
 
+  def handle_info({:exchange_updated, %{building: building, build_steps: build_steps}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:building, building)
+     |> assign(:build_steps, build_steps)}
+  end
+
   @impl true
   def handle_event("start_exchange", %{"type" => type} = params, socket) do
     type = String.to_existing_atom(type)
 
-    {:noreply,
-     socket
-     |> assign(:building, type)
-     |> assign(:build_steps, [])
-     |> assign(:prefill_entity_id, params["entity_id"])}
+    socket =
+      socket
+      |> assign(:building, type)
+      |> assign(:build_steps, [])
+      |> assign(:prefill_entity_id, params["entity_id"])
+
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("cancel_build", _params, socket) do
-    {:noreply, socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)}
+    socket = socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
-  def handle_event("add_step", %{"step_type" => step_type} = params, socket) do
+  def handle_event("add_step", %{"step_type" => step_type} = _params, socket) do
     type = String.to_existing_atom(step_type)
     prefill_actor = socket.assigns.prefill_entity_id
 
@@ -133,10 +146,13 @@ defmodule FateWeb.ActionsLive do
 
     new_index = length(socket.assigns.build_steps)
 
-    {:noreply,
-     socket
-     |> assign(:build_steps, socket.assigns.build_steps ++ [step])
-     |> assign(:editing_step, new_index)}
+    socket =
+      socket
+      |> assign(:build_steps, socket.assigns.build_steps ++ [step])
+      |> assign(:editing_step, new_index)
+
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("edit_step", %{"index" => index}, socket) do
@@ -159,7 +175,9 @@ defmodule FateWeb.ActionsLive do
       true -> editing
     end
 
-    {:noreply, socket |> assign(:build_steps, steps) |> assign(:editing_step, editing)}
+    socket = socket |> assign(:build_steps, steps) |> assign(:editing_step, editing)
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("update_step_field", %{"index" => index_str} = params, socket) do
@@ -193,7 +211,9 @@ defmodule FateWeb.ActionsLive do
       end
 
     steps = List.replace_at(steps, index, step)
-    {:noreply, assign(socket, :build_steps, steps)}
+    socket = assign(socket, :build_steps, steps)
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("auto_roll_dice", %{"index" => index_str}, socket) do
@@ -210,7 +230,9 @@ defmodule FateWeb.ActionsLive do
     step = put_in(step.detail["raw_total"], dice_sum + skill_rating)
 
     steps = List.replace_at(steps, index, step)
-    {:noreply, assign(socket, :build_steps, steps)}
+    socket = assign(socket, :build_steps, steps)
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("toggle_die", %{"index" => index_str, "die" => die_str}, socket) do
@@ -236,7 +258,9 @@ defmodule FateWeb.ActionsLive do
     step = put_in(step.detail["raw_total"], dice_sum + skill_rating)
 
     steps = List.replace_at(steps, step_index, step)
-    {:noreply, assign(socket, :build_steps, steps)}
+    socket = assign(socket, :build_steps, steps)
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("commit_exchange", _params, socket) do
@@ -259,7 +283,9 @@ defmodule FateWeb.ActionsLive do
       end
     end)
 
-    {:noreply, socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)}
+    socket = socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)
+    broadcast_exchange(socket)
+    {:noreply, socket}
   end
 
   def handle_event("open_modal", %{"type" => type} = params, socket) do
@@ -1251,6 +1277,16 @@ defmodule FateWeb.ActionsLive do
     case Jason.decode(detail) do
       {:ok, map} -> map
       _ -> %{}
+    end
+  end
+
+  defp broadcast_exchange(socket) do
+    if socket.assigns.branch_id do
+      Phoenix.PubSub.broadcast(
+        Fate.PubSub,
+        "exchange:#{socket.assigns.branch_id}",
+        {:exchange_updated, %{building: socket.assigns.building, build_steps: socket.assigns.build_steps}}
+      )
     end
   end
 
