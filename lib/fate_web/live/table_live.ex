@@ -2,10 +2,13 @@ defmodule FateWeb.TableLive do
   use FateWeb, :live_view
 
   alias Fate.Engine
+  alias Fate.Game.Bookmarks
+
+  import FateWeb.TableComponents
 
   @impl true
   def mount(_params, _session, socket) do
-    is_gm = is_localhost?(socket)
+    is_gm = FateWeb.Helpers.localhost?(socket)
 
     socket =
       socket
@@ -15,7 +18,6 @@ defmodule FateWeb.TableLive do
       |> assign(:bookmark_id, nil)
       |> assign(:state, nil)
       |> assign(:participants, [])
-      |> assign(:current_participant, nil)
       |> assign(:selection, [])
       |> assign(:current_scene_id, nil)
       |> assign(:table_modal, nil)
@@ -31,8 +33,9 @@ defmodule FateWeb.TableLive do
 
       case Engine.derive_state(bookmark_id) do
         {:ok, state} ->
-          participants = load_bookmark_participants(bookmark_id)
+          participants = Bookmarks.load_participants(bookmark_id)
           current_scene = find_default_scene(state)
+
           {:noreply,
            socket
            |> assign(:bookmark_id, bookmark_id)
@@ -95,11 +98,11 @@ defmodule FateWeb.TableLive do
 
   def handle_event("remove_from_zone", %{"entity_id" => entity_id}, socket) do
     case Fate.Engine.append_event(socket.assigns.bookmark_id, %{
-      type: :entity_move,
-      actor_id: entity_id,
-      description: "Leave zone",
-      detail: %{"entity_id" => entity_id, "zone_id" => nil}
-    }) do
+           type: :entity_move,
+           actor_id: entity_id,
+           description: "Leave zone",
+           detail: %{"entity_id" => entity_id, "zone_id" => nil}
+         }) do
       {:ok, _state, _event} -> {:noreply, socket}
       {:error, reason} -> {:noreply, put_flash(socket, :error, inspect(reason))}
     end
@@ -107,17 +110,26 @@ defmodule FateWeb.TableLive do
 
   def handle_event("move_to_zone", %{"entity_id" => entity_id, "zone_id" => zone_id}, socket) do
     case Fate.Engine.append_event(socket.assigns.bookmark_id, %{
-      type: :entity_move,
-      actor_id: entity_id,
-      description: "Move to zone",
-      detail: %{"entity_id" => entity_id, "zone_id" => zone_id}
-    }) do
+           type: :entity_move,
+           actor_id: entity_id,
+           description: "Move to zone",
+           detail: %{"entity_id" => entity_id, "zone_id" => zone_id}
+         }) do
       {:ok, _state, _event} -> {:noreply, socket}
       {:error, reason} -> {:noreply, put_flash(socket, :error, inspect(reason))}
     end
   end
 
-  def handle_event("invoke_aspect", %{"aspect-id" => _aspect_id, "entity-id" => entity_id, "description" => description, "free" => free}, socket) do
+  def handle_event(
+        "invoke_aspect",
+        %{
+          "aspect-id" => _aspect_id,
+          "entity-id" => entity_id,
+          "description" => description,
+          "free" => free
+        },
+        socket
+      ) do
     is_free = free == "true"
 
     if !is_free do
@@ -139,7 +151,11 @@ defmodule FateWeb.TableLive do
     {:noreply, socket}
   end
 
-  def handle_event("compel_aspect", %{"entity-id" => entity_id, "aspect-id" => aspect_id, "description" => description}, socket) do
+  def handle_event(
+        "compel_aspect",
+        %{"entity-id" => entity_id, "aspect-id" => aspect_id, "description" => description},
+        socket
+      ) do
     branch_id = socket.assigns.bookmark_id
 
     Fate.Engine.append_event(branch_id, %{
@@ -159,7 +175,15 @@ defmodule FateWeb.TableLive do
     {:noreply, socket}
   end
 
-  def handle_event("begin_recovery", %{"consequence-id" => consequence_id, "entity-id" => entity_id, "aspect-text" => aspect_text}, socket) do
+  def handle_event(
+        "begin_recovery",
+        %{
+          "consequence-id" => consequence_id,
+          "entity-id" => entity_id,
+          "aspect-text" => aspect_text
+        },
+        socket
+      ) do
     Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :consequence_recover,
       target_id: entity_id,
@@ -170,7 +194,11 @@ defmodule FateWeb.TableLive do
     {:noreply, socket}
   end
 
-  def handle_event("clear_consequence", %{"consequence-id" => consequence_id, "entity-id" => entity_id}, socket) do
+  def handle_event(
+        "clear_consequence",
+        %{"consequence-id" => consequence_id, "entity-id" => entity_id},
+        socket
+      ) do
     Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :consequence_recover,
       target_id: entity_id,
@@ -288,7 +316,11 @@ defmodule FateWeb.TableLive do
     {:noreply, assign(socket, :table_modal, "zone_create")}
   end
 
-  def handle_event("apply_stress", %{"entity-id" => entity_id, "track-label" => track_label, "box-index" => box_str}, socket) do
+  def handle_event(
+        "apply_stress",
+        %{"entity-id" => entity_id, "track-label" => track_label, "box-index" => box_str},
+        socket
+      ) do
     {box_index, _} = Integer.parse(box_str)
     state = socket.assigns.state
     entity = Map.get(state.entities, entity_id)
@@ -316,7 +348,11 @@ defmodule FateWeb.TableLive do
     {:noreply, socket}
   end
 
-  def handle_event("toggle_zone_visibility", %{"zone-id" => zone_id, "scene-id" => _scene_id}, socket) do
+  def handle_event(
+        "toggle_zone_visibility",
+        %{"zone-id" => zone_id, "scene-id" => _scene_id},
+        socket
+      ) do
     active = Enum.find(socket.assigns.state.scenes, &(&1.status == :active))
     zone = active && Enum.find(active.zones, &(&1.id == zone_id))
 
@@ -369,7 +405,8 @@ defmodule FateWeb.TableLive do
           scene_id
 
         "zone_create" ->
-          active = Enum.find(socket.assigns.state.scenes, &(&1.id == socket.assigns.current_scene_id))
+          active =
+            Enum.find(socket.assigns.state.scenes, &(&1.id == socket.assigns.current_scene_id))
 
           if active do
             Fate.Engine.append_event(socket.assigns.bookmark_id, %{
@@ -412,11 +449,17 @@ defmodule FateWeb.TableLive do
       <%= if @state == nil do %>
         <div class="flex items-center justify-center h-full">
           <div class="text-center">
-            <h1 class="text-4xl font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
+            <h1
+              class="text-4xl font-bold text-amber-100 mb-4"
+              style="font-family: 'Permanent Marker', cursive;"
+            >
               Fate Table
             </h1>
             <p class="text-amber-200/70 mb-8">No branch loaded. Select a branch to begin.</p>
-            <.link navigate={~p"/branches"} class="px-6 py-3 bg-amber-700 text-amber-100 rounded-lg hover:bg-amber-600 transition">
+            <.link
+              navigate={~p"/branches"}
+              class="px-6 py-3 bg-amber-700 text-amber-100 rounded-lg hover:bg-amber-600 transition"
+            >
               Browse Branches
             </.link>
           </div>
@@ -463,7 +506,10 @@ defmodule FateWeb.TableLive do
             data-anchor="gm"
             data-element-id="gm-notes-card"
           >
-            <div class="relative p-3 rounded-lg shadow-lg w-56" style="background: #1a1510; border: 1px solid rgba(180, 140, 80, 0.3);">
+            <div
+              class="relative p-3 rounded-lg shadow-lg w-56"
+              style="background: #1a1510; border: 1px solid rgba(180, 140, 80, 0.3);"
+            >
               <div
                 class="w-5 h-5 rounded-full bg-amber-700 hover:bg-amber-600 cursor-pointer flex items-center justify-center transition entity-circle ring-trigger"
                 style="position: absolute; top: -0.375rem; right: -0.375rem;"
@@ -474,17 +520,26 @@ defmodule FateWeb.TableLive do
                 <.gm_notes_ring state={@state} current_scene_id={@current_scene_id} />
               </div>
               <%= if gm_scene do %>
-                <div class="text-sm font-bold text-amber-100/90 mb-1" style="font-family: 'Patrick Hand', cursive;">
+                <div
+                  class="text-sm font-bold text-amber-100/90 mb-1"
+                  style="font-family: 'Patrick Hand', cursive;"
+                >
                   {gm_scene.name}
                 </div>
                 <%= if gm_scene.description do %>
-                  <div class="text-base text-amber-200/40 mb-2 leading-snug" style="font-family: 'Caveat', cursive;">
+                  <div
+                    class="text-base text-amber-200/40 mb-2 leading-snug"
+                    style="font-family: 'Caveat', cursive;"
+                  >
                     {gm_scene.description}
                   </div>
                 <% end %>
               <% end %>
               <%= if gm_scene && gm_scene.gm_notes do %>
-                <div class="text-sm text-amber-200/60 border-t border-amber-700/20 pt-2 mt-1 leading-snug" style="font-family: 'Patrick Hand', cursive;">
+                <div
+                  class="text-sm text-amber-200/60 border-t border-amber-700/20 pt-2 mt-1 leading-snug"
+                  style="font-family: 'Patrick Hand', cursive;"
+                >
                   {gm_scene.gm_notes}
                 </div>
               <% end %>
@@ -597,10 +652,14 @@ defmodule FateWeb.TableLive do
 
         <%!-- === Zones — anchored to scene === --%>
         <% active_scene_zones = if active_scene, do: active_scene.zones, else: [] %>
-        <% visible_zones = if @is_gm, do: active_scene_zones, else: Enum.reject(active_scene_zones, & &1.hidden) %>
+        <% visible_zones =
+          if @is_gm, do: active_scene_zones, else: Enum.reject(active_scene_zones, & &1.hidden) %>
         <%= for zone <- visible_zones do %>
           <div
-            class={["absolute spring-element", zone.hidden && "opacity-40 hover:opacity-70 transition-opacity duration-300"]}
+            class={[
+              "absolute spring-element",
+              zone.hidden && "opacity-40 hover:opacity-70 transition-opacity duration-300"
+            ]}
             data-anchor="centre"
             data-element-id={"zone-#{zone.id}"}
             data-zone-only-repulsion="true"
@@ -619,11 +678,17 @@ defmodule FateWeb.TableLive do
                   phx-value-scene-id={active_scene && active_scene.id}
                   class={[
                     "absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs shadow-lg transition z-10",
-                    if(zone.hidden, do: "bg-amber-600 hover:bg-amber-500 text-white opacity-100", else: "bg-gray-600 hover:bg-gray-500 text-white opacity-0 hover:opacity-100")
+                    if(zone.hidden,
+                      do: "bg-amber-600 hover:bg-amber-500 text-white opacity-100",
+                      else: "bg-gray-600 hover:bg-gray-500 text-white opacity-0 hover:opacity-100"
+                    )
                   ]}
                   data-tooltip={if(zone.hidden, do: "Reveal zone", else: "Hide zone")}
                 >
-                  <.icon name={if(zone.hidden, do: "hero-eye", else: "hero-eye-slash")} class="w-3 h-3" />
+                  <.icon
+                    name={if(zone.hidden, do: "hero-eye", else: "hero-eye-slash")}
+                    class="w-3 h-3"
+                  />
                 </button>
               <% end %>
               <div
@@ -635,8 +700,15 @@ defmodule FateWeb.TableLive do
 
               <%!-- Zone aspects --%>
               <%= for aspect <- visible_zone_aspects(zone.aspects, @is_gm) do %>
-                <div class={["group/za text-xs px-1 py-0.5 rounded mb-1 flex items-center gap-1", aspect_style(aspect), aspect.hidden && "opacity-50"]}>
-                  <span class="flex-1 text-gray-900" style="font-family: 'Permanent Marker', cursive; font-size: 0.65rem;">
+                <div class={[
+                  "group/za text-xs px-1 py-0.5 rounded mb-1 flex items-center gap-1",
+                  aspect_style(aspect),
+                  aspect.hidden && "opacity-50"
+                ]}>
+                  <span
+                    class="flex-1 text-gray-900"
+                    style="font-family: 'Permanent Marker', cursive; font-size: 0.65rem;"
+                  >
                     {aspect.description}
                   </span>
                   <%= if @is_gm do %>
@@ -646,7 +718,10 @@ defmodule FateWeb.TableLive do
                       class="opacity-0 group-hover/za:opacity-100 transition-opacity text-gray-500 hover:text-gray-700"
                       title={if(aspect.hidden, do: "Reveal", else: "Hide")}
                     >
-                      <.icon name={if(aspect.hidden, do: "hero-eye", else: "hero-eye-slash")} class="w-3 h-3" />
+                      <.icon
+                        name={if(aspect.hidden, do: "hero-eye", else: "hero-eye-slash")}
+                        class="w-3 h-3"
+                      />
                     </button>
                   <% end %>
                 </div>
@@ -676,7 +751,10 @@ defmodule FateWeb.TableLive do
         <%!-- === Scene aspects — anchored to scene === --%>
         <%= for aspect <- scene_aspects(@state, @is_gm, @current_scene_id) do %>
           <div
-            class={["absolute spring-element", aspect.hidden && "opacity-40 hover:opacity-70 transition-opacity duration-300"]}
+            class={[
+              "absolute spring-element",
+              aspect.hidden && "opacity-40 hover:opacity-70 transition-opacity duration-300"
+            ]}
             data-anchor="centre"
             data-element-id={"aspect-#{aspect.id}"}
             phx-mounted={JS.transition("entity-warp-in", time: 1000)}
@@ -690,8 +768,7 @@ defmodule FateWeb.TableLive do
         <% end %>
 
         <%!-- === Table modal overlay === --%>
-        <.table_modal modal={@table_modal} />
-
+        <.table_modal modal={@table_modal} state={@state} />
       <% end %>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".RingTrigger">
@@ -783,713 +860,7 @@ defmodule FateWeb.TableLive do
     """
   end
 
-  # --- Components ---
-
-  @gm_color "#ef4444"
-
-  defp entity_card(assigns) do
-    assigns = assign_new(assigns, :circle_color, fn ->
-      if assigns.entity.controller_id, do: assigns.entity.color || "#6b7280", else: @gm_color
-    end)
-
-    ~H"""
-    <div
-      id={"entity-#{@entity.id}"}
-      phx-click="select"
-      phx-value-id={@entity.id}
-      phx-value-type="entity"
-      class={"relative p-3 rounded-lg shadow-lg w-52 cursor-pointer transition-all
-        #{if @selected, do: "ring-2 ring-yellow-400 scale-105", else: "hover:scale-102"}"}
-      style={"background: #f5f0e8; border-left: 4px solid #{@entity.color || "#6b7280"};"}
-    >
-      <div class="flex items-center gap-2 mb-2">
-        <%= if @entity.avatar do %>
-          <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-xs">
-            {String.at(@entity.name, 0)}
-          </div>
-        <% end %>
-        <div>
-          <div class="font-bold text-gray-900 text-base" style="font-family: 'Patrick Hand', cursive;">
-            {@entity.name}
-          </div>
-          <div class="text-xs text-gray-500 uppercase tracking-wide">
-            {@entity.kind}
-            <%= if @entity.mook_count do %>
-              <span class="ml-1 text-red-600 font-bold">×{@entity.mook_count}</span>
-            <% end %>
-          </div>
-        </div>
-        <div class="ml-auto relative z-10 ring-trigger" id={"ring-trigger-#{@entity.id}"} phx-hook=".RingTrigger">
-          <div
-            class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white entity-circle"
-            style={"background: #{@circle_color};"}
-            draggable="true"
-            phx-hook="DraggableToken"
-            id={"token-#{@entity.id}"}
-            data-entity-id={@entity.id}
-            data-entity-name={@entity.name}
-            data-entity-color={@circle_color}
-          >
-            <%= if @entity.fate_points do %>
-              {@entity.fate_points}
-            <% end %>
-          </div>
-          <.entity_ring entity={@entity} is_gm={@is_gm} />
-        </div>
-      </div>
-
-      <%!-- Aspects --%>
-      <%= for aspect <- visible_aspects(@entity.aspects, @is_gm) do %>
-        <div class={"group/aspect relative flex items-start gap-1 text-xs px-2 py-1 rounded mb-1 #{aspect_style(aspect)}"}>
-          <span class="flex-1 font-semibold text-gray-900" style="font-family: 'Permanent Marker', cursive; font-size: 0.8rem;">
-            {aspect.description}
-          </span>
-          <%= if aspect.free_invokes > 0 do %>
-            <span class="text-green-700">
-              {"☐" |> String.duplicate(aspect.free_invokes)}
-            </span>
-          <% end %>
-          <%= if aspect.hidden do %>
-            <span class="opacity-50">👁</span>
-          <% end %>
-          <div class="aspect-inline-menu opacity-0 group-hover/aspect:opacity-100 transition-opacity flex gap-0.5 shrink-0">
-            <button
-              phx-click="invoke_aspect"
-              phx-value-aspect-id={aspect.id}
-              phx-value-entity-id={@entity.id}
-              phx-value-description={aspect.description}
-              phx-value-free={if(aspect.free_invokes > 0, do: "true", else: "false")}
-              class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
-              data-tooltip={if(aspect.free_invokes > 0, do: "Free invoke", else: "Invoke (spend FP)")}
-            >
-              {if aspect.free_invokes > 0, do: "Free", else: "FP"}
-            </button>
-            <%= if @is_gm do %>
-              <button
-                phx-click="compel_aspect"
-                phx-value-aspect-id={aspect.id}
-                phx-value-entity-id={@entity.id}
-                phx-value-description={aspect.description}
-                class="px-1.5 py-0.5 bg-amber-600/80 hover:bg-amber-500 text-white rounded text-xs leading-none transition"
-                data-tooltip="Compel"
-              >
-                C
-              </button>
-            <% end %>
-            <button
-              phx-click="remove_aspect"
-              phx-value-aspect-id={aspect.id}
-              phx-value-entity-id={@entity.id}
-              class="text-red-400 hover:text-red-600 text-xs leading-none transition px-0.5"
-              data-tooltip="Remove"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Consequences (only shown when taken) --%>
-      <%= for cons <- @entity.consequences do %>
-        <div class={"group/cons flex items-center gap-1 text-xs px-2 py-1 rounded mb-1 #{if cons.recovering, do: "bg-green-50 border-l-2 border-green-300", else: "bg-red-50 border-l-2 border-red-300"}"}>
-          <span class="text-gray-400 uppercase shrink-0" style="font-size: 0.6rem;">{cons.severity}</span>
-          <span class="flex-1 font-semibold text-gray-900" style="font-family: 'Permanent Marker', cursive; font-size: 0.75rem;">
-            {cons.aspect_text || "—"}
-          </span>
-          <div class="opacity-0 group-hover/cons:opacity-100 transition-opacity flex gap-0.5 shrink-0">
-            <%= if cons.recovering do %>
-              <button
-                phx-click="clear_consequence"
-                phx-value-consequence-id={cons.id}
-                phx-value-entity-id={@entity.id}
-                class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
-                data-tooltip="Clear"
-              >
-                <.icon name="hero-check" class="w-3 h-3" />
-              </button>
-            <% else %>
-              <button
-                phx-click="begin_recovery"
-                phx-value-consequence-id={cons.id}
-                phx-value-entity-id={@entity.id}
-                phx-value-aspect-text={cons.aspect_text}
-                class="px-1.5 py-0.5 bg-blue-600/80 hover:bg-blue-500 text-white rounded text-xs leading-none transition"
-                data-tooltip="Begin recovery"
-              >
-                <.icon name="hero-arrow-path" class="w-3 h-3" />
-              </button>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Stress tracks --%>
-      <%= if @entity.stress_tracks != [] do %>
-        <div class="flex gap-2 mt-1">
-          <%= for track <- @entity.stress_tracks do %>
-            <div class="flex items-center gap-0.5">
-              <span class="text-gray-400 text-xs font-bold uppercase" style="font-size: 0.55rem;">
-                {String.first(track.label)}
-              </span>
-              <%= for i <- 1..track.boxes do %>
-                <div
-                  phx-click="apply_stress"
-                  phx-value-entity-id={@entity.id}
-                  phx-value-track-label={track.label}
-                  phx-value-box-index={i}
-                  class={[
-                    "w-4 h-4 border rounded text-center leading-4 cursor-pointer transition-all",
-                    if(i in track.checked,
-                      do: "bg-red-500 border-red-600 text-white",
-                      else: "border-gray-400 text-gray-400 hover:bg-red-100 hover:border-red-300"
-                    )
-                  ]}
-                  style="font-size: 0.55rem;"
-                >
-                  {i}
-                </div>
-              <% end %>
-            </div>
-          <% end %>
-        </div>
-      <% end %>
-
-      <%!-- Pending shifts --%>
-      <%= if @entity.pending_shifts do %>
-        <div class="mt-1 px-2 py-1 bg-red-100 border border-red-300 rounded text-xs text-red-700 font-bold animate-pulse">
-          {@entity.pending_shifts.remaining_shifts} shifts!
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp aspect_card(assigns) do
-    assigns = assign_new(assigns, :is_gm, fn -> false end)
-
-    ~H"""
-    <div
-      id={"aspect-#{@aspect.id}"}
-      phx-click="select"
-      phx-value-id={@aspect.id}
-      phx-value-type="aspect"
-      class={"group/scard relative p-2 rounded shadow-md min-w-32 max-w-48 cursor-pointer transition-all
-        #{if @selected, do: "ring-2 ring-yellow-400 scale-105", else: "hover:scale-102"}
-        #{if @aspect.role == :boost, do: "opacity-80", else: ""}"}
-      style={aspect_card_bg(@aspect)}
-    >
-      <div class="font-bold text-gray-900 text-sm" style="font-family: 'Permanent Marker', cursive;">
-        {@aspect.description}
-      </div>
-      <%= if @aspect.free_invokes > 0 do %>
-        <div class="text-xs text-green-700 mt-1">
-          Free: {"☐" |> String.duplicate(@aspect.free_invokes)}
-        </div>
-      <% end %>
-      <div class="absolute -top-2 -right-2 flex gap-0.5">
-        <%= if @is_gm do %>
-          <button
-            phx-click="toggle_scene_aspect_visibility"
-            phx-value-aspect-id={@aspect.id}
-            class={[
-              "w-5 h-5 rounded-full flex items-center justify-center shadow transition-opacity",
-              if(@aspect.hidden, do: "bg-amber-600 hover:bg-amber-500 text-white opacity-100", else: "bg-gray-600 hover:bg-gray-500 text-white opacity-0 group-hover/scard:opacity-100")
-            ]}
-            data-tooltip={if(@aspect.hidden, do: "Reveal", else: "Hide")}
-          >
-            <.icon name={if(@aspect.hidden, do: "hero-eye", else: "hero-eye-slash")} class="w-3 h-3" />
-          </button>
-        <% end %>
-        <button
-          phx-click="remove_scene_aspect"
-          phx-value-aspect-id={@aspect.id}
-          class="w-5 h-5 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xs shadow opacity-0 group-hover/scard:opacity-100 transition-opacity"
-          data-tooltip="Remove"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-    """
-  end
-
-  defp your_tent(assigns) do
-    entities = controlled_entities(assigns.state, assigns.current_participant)
-    assigns = assign(assigns, :entities, entities)
-
-    ~H"""
-    <div
-      id="your-tent"
-      class="z-30"
-      style={tent_style(@dock_position, @tent_size)}
-    >
-      <div class="h-full overflow-y-auto p-4 flex flex-wrap gap-3 content-start">
-        <%= if @is_gm do %>
-          <%!-- GM tent content --%>
-          <div class="w-full mb-2">
-            <div
-              class="text-lg text-amber-100 font-bold"
-              style="font-family: 'Permanent Marker', cursive;"
-            >
-              GM Workspace
-            </div>
-            <div class="flex items-center gap-2 mt-1">
-              <div class="text-amber-200/70 text-sm">Fate Points:</div>
-              <div class="w-8 h-8 rounded-full bg-red-800 flex items-center justify-center text-white font-bold text-sm">
-                {@state.gm_fate_points}
-              </div>
-            </div>
-          </div>
-
-          <%!-- All entities the GM might manage --%>
-          <%= for entity <- Map.values(@state.entities) |> Enum.filter(&(&1.kind != :pc)) do %>
-            <.entity_card
-              entity={entity}
-              is_gm={@is_gm}
-              selected={%{id: entity.id, type: "entity"} in @selection}
-            />
-          <% end %>
-        <% else %>
-          <%!-- Player tent content --%>
-          <%= for entity <- @entities do %>
-            <.entity_card_detailed
-              entity={entity}
-              is_gm={false}
-              selection={@selection}
-            />
-          <% end %>
-
-          <%= if @entities == [] do %>
-            <div class="text-amber-200/50 text-sm">
-              No controlled entities. Ask the GM to assign you a character.
-            </div>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  defp entity_card_detailed(assigns) do
-    ~H"""
-    <div
-      id={"detail-#{@entity.id}"}
-      class="p-4 rounded-lg shadow-lg w-full max-w-md"
-      style={"background: #f5f0e8; border-left: 4px solid #{@entity.color || "#6b7280"};"}
-    >
-      <%!-- Header --%>
-      <div class="flex items-center gap-3 mb-3">
-        <div>
-          <div class="font-bold text-gray-900 text-xl" style="font-family: 'Patrick Hand', cursive;">
-            {@entity.name}
-          </div>
-          <div class="text-sm text-gray-500 uppercase tracking-wide">{@entity.kind}</div>
-        </div>
-        <%= if @entity.fate_points do %>
-          <div class="ml-auto flex items-center gap-2">
-            <span class="text-xs text-gray-500">FP</span>
-            <div
-              class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
-              style={"background: #{@entity.color || "#6b7280"};"}
-            >
-              {@entity.fate_points}
-            </div>
-            <%= if @entity.refresh do %>
-              <span class="text-xs text-gray-400">/ {@entity.refresh}</span>
-            <% end %>
-          </div>
-        <% end %>
-      </div>
-
-      <%!-- Aspects --%>
-      <div class="mb-3">
-        <%= for aspect <- @entity.aspects do %>
-          <div
-            phx-click="select"
-            phx-value-id={aspect.id}
-            phx-value-type="aspect"
-            class={"text-sm px-2 py-1 rounded mb-1 cursor-pointer transition-all #{aspect_style(aspect)}
-              #{if %{id: aspect.id, type: "aspect"} in @selection, do: "ring-2 ring-yellow-400", else: ""}"}
-          >
-            <span class="text-xs uppercase text-gray-400 mr-1">{aspect.role}</span>
-            <span class="text-gray-900" style="font-family: 'Permanent Marker', cursive;">{aspect.description}</span>
-            <%= if aspect.free_invokes > 0 do %>
-              <span class="ml-1 text-green-700">{"☐" |> String.duplicate(aspect.free_invokes)}</span>
-            <% end %>
-          </div>
-        <% end %>
-      </div>
-
-      <%!-- Skills --%>
-      <%= if map_size(@entity.skills) > 0 do %>
-        <div class="mb-3">
-          <div class="text-xs uppercase text-gray-500 mb-1 font-bold">Skills</div>
-          <div class="grid grid-cols-2 gap-1">
-            <%= for {skill, rating} <- @entity.skills |> Enum.sort_by(&elem(&1, 1), :desc) do %>
-              <div class="flex justify-between text-xs px-2 py-0.5 bg-white/50 rounded">
-                <span>{skill}</span>
-                <span class="font-bold">{rating_label(rating)}</span>
-              </div>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Stunts --%>
-      <%= if @entity.stunts != [] do %>
-        <div class="mb-3">
-          <div class="text-xs uppercase text-gray-500 mb-1 font-bold">Stunts</div>
-          <%= for stunt <- @entity.stunts do %>
-            <div class="text-xs px-2 py-1 bg-blue-50 rounded mb-1">
-              <span class="font-bold">{stunt.name}:</span>
-              <span class="text-gray-600">{stunt.effect}</span>
-            </div>
-          <% end %>
-        </div>
-      <% end %>
-
-      <%!-- Stress Tracks --%>
-      <%= for track <- @entity.stress_tracks do %>
-        <div class="mb-2">
-          <div class="text-xs uppercase text-gray-500 font-bold">{track.label} Stress</div>
-          <div class="flex gap-1 mt-1">
-            <%= for i <- 1..track.boxes do %>
-              <div
-                phx-click="apply_stress"
-                phx-value-entity-id={@entity.id}
-                phx-value-track-label={track.label}
-                phx-value-box-index={i}
-                class={[
-                  "w-6 h-6 border-2 rounded flex items-center justify-center text-xs font-bold cursor-pointer transition-all",
-                  if(i in track.checked,
-                    do: "bg-red-500 border-red-700 text-white",
-                    else: "border-gray-400 text-gray-400 hover:bg-red-100 hover:border-red-300"
-                  )
-                ]}
-              >
-                {i}
-              </div>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Consequences --%>
-      <div class="mb-2">
-        <div class="text-xs uppercase text-gray-500 font-bold mb-1">Consequences</div>
-        <%= for cons <- @entity.consequences do %>
-          <div class={"text-xs px-2 py-1 rounded mb-1 #{if cons.recovering, do: "bg-green-50 border border-green-200", else: "bg-red-50 border border-red-200"}"}>
-            <span class="font-bold uppercase text-gray-500">{cons.severity} ({cons.shifts}):</span>
-            <span style="font-family: 'Permanent Marker', cursive;">
-              {cons.aspect_text || "—"}
-            </span>
-          </div>
-        <% end %>
-        <%= if @entity.consequences == [] do %>
-          <div class="text-xs text-gray-400">No consequences</div>
-        <% end %>
-      </div>
-
-      <%!-- Pending Shifts --%>
-      <%= if @entity.pending_shifts do %>
-        <div class="p-2 bg-red-100 border border-red-300 rounded text-xs">
-          <span class="font-bold text-red-700">
-            {@entity.pending_shifts.remaining_shifts} shifts to absorb!
-          </span>
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp other_tent(assigns) do
-    participant = assigns.branch_participant.participant
-    entity = find_controlled_entity(assigns.state, participant.id)
-    assigns = assign(assigns, :entity, entity) |> assign(:participant, participant)
-
-    ~H"""
-    <div
-      id={"tent-#{@participant.id}"}
-      class="z-20"
-    >
-      <div
-        class="p-2 rounded-lg shadow-lg max-w-48 overflow-hidden"
-        style={"background: #f5f0e8; border-top: 3px solid #{@participant.color};"}
-      >
-        <div class="font-bold text-gray-800 text-sm" style="font-family: 'Patrick Hand', cursive;">
-          {@participant.name}
-          <span class="text-xs text-gray-400 ml-1">
-            {if @branch_participant.role == :gm, do: "(GM)", else: ""}
-          </span>
-        </div>
-
-        <%= if @entity do %>
-          <div class="text-xs text-gray-600 mt-1">{@entity.name}</div>
-
-          <%!-- Aspects (always visible) --%>
-          <%= for aspect <- visible_aspects(@entity.aspects, @is_gm) do %>
-            <div class={"text-xs px-1 py-0.5 rounded mt-1 #{aspect_style(aspect)}"}>
-              <span style="font-family: 'Permanent Marker', cursive; font-size: 0.65rem;">
-                {aspect.description}
-              </span>
-            </div>
-          <% end %>
-
-          <%!-- GM X-ray: skills, full stress, consequences --%>
-          <%= if @is_gm do %>
-            <%= if map_size(@entity.skills) > 0 do %>
-              <div class="mt-2 text-xs">
-                <%= for {skill, rating} <- @entity.skills |> Enum.sort_by(&elem(&1, 1), :desc) |> Enum.take(4) do %>
-                  <div class="flex justify-between text-gray-600">
-                    <span>{skill}</span>
-                    <span class="font-bold">{rating_label(rating)}</span>
-                  </div>
-                <% end %>
-              </div>
-            <% end %>
-
-            <%= for track <- @entity.stress_tracks do %>
-              <div class="flex gap-0.5 mt-1">
-                <%= for i <- 1..track.boxes do %>
-                  <div class={"w-4 h-4 border rounded text-center text-xs
-                    #{if i in track.checked, do: "bg-red-500 border-red-700 text-white", else: "border-gray-300"}"}>
-                    {if i in track.checked, do: "×", else: ""}
-                  </div>
-                <% end %>
-              </div>
-            <% end %>
-          <% else %>
-            <%!-- Player view: compact stress summary --%>
-            <%= if @entity.stress_tracks != [] do %>
-              <div class="text-xs text-gray-400 mt-1">
-                Stress: {stress_summary(@entity)}
-              </div>
-            <% end %>
-          <% end %>
-
-          <%!-- Fate points --%>
-          <%= if @entity.fate_points do %>
-            <div class="mt-1">
-              <div
-                class="inline-flex w-5 h-5 rounded-full items-center justify-center text-xs font-bold text-white"
-                style={"background: #{@entity.color || @participant.color};"}
-              >
-                {@entity.fate_points}
-              </div>
-            </div>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  defp entity_ring(assigns) do
-    ~H"""
-    <div class="context-ring" id={"ring-#{@entity.id}"}>
-      <%= if @entity.fate_points do %>
-        <button class="ring-item" phx-click="ring_action" phx-value-action="fp_earn" phx-value-entity-id={@entity.id} data-tooltip="FP +1">
-          <.icon name="hero-plus-circle" class="w-3.5 h-3.5" />
-        </button>
-        <button class="ring-item" phx-click="ring_action" phx-value-action="fp_spend" phx-value-entity-id={@entity.id} data-tooltip="FP −1">
-          <.icon name="hero-minus-circle" class="w-3.5 h-3.5" />
-        </button>
-        <button class="ring-item" phx-click="ring_action" phx-value-action="concede" phx-value-entity-id={@entity.id} data-tooltip="Concede">
-          <.icon name="hero-flag" class="w-3.5 h-3.5" />
-        </button>
-      <% end %>
-      <%= if @entity.mook_count do %>
-        <button class="ring-item ring-item-danger" phx-click="ring_action" phx-value-action="mook_eliminate" phx-value-entity-id={@entity.id} data-tooltip="Eliminate mook">
-          <.icon name="hero-x-circle" class="w-3.5 h-3.5" />
-        </button>
-      <% end %>
-      <%= if @is_gm do %>
-        <button
-          class="ring-item"
-          phx-click="ring_action"
-          phx-value-action={if(entity_hidden?(@entity), do: "reveal", else: "hide")}
-          phx-value-entity-id={@entity.id}
-          data-tooltip={if(entity_hidden?(@entity), do: "Reveal", else: "Hide")}
-        >
-          <.icon name={if(entity_hidden?(@entity), do: "hero-eye", else: "hero-eye-slash")} class="w-3.5 h-3.5" />
-        </button>
-        <button
-          class="ring-item ring-item-danger"
-          phx-click="ring_action"
-          phx-value-action="remove"
-          phx-value-entity-id={@entity.id}
-          data-tooltip="Remove"
-          data-confirm="Remove this entity?"
-        >
-          <.icon name="hero-trash" class="w-3.5 h-3.5" />
-        </button>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp gm_notes_ring(assigns) do
-    active_scene = Enum.find(assigns.state.scenes, &(&1.id == assigns.current_scene_id))
-    active_scenes = Enum.filter(assigns.state.scenes, &(&1.status == :active))
-    assigns = assigns |> assign(:active_scene, active_scene) |> assign(:active_scenes, active_scenes)
-
-    ~H"""
-    <div class="context-ring" id="ring-gm-notes">
-      <button class="ring-item" phx-click="ring_action" phx-value-action="new_scene" data-tooltip="New Scene">
-        <.icon name="hero-play" class="w-3.5 h-3.5" />
-      </button>
-      <%= if length(@active_scenes) > 1 do %>
-        <button class="ring-item" phx-click="ring_action" phx-value-action="switch_scene_list" data-tooltip="Switch Scene">
-          <.icon name="hero-arrows-right-left" class="w-3.5 h-3.5" />
-        </button>
-      <% end %>
-      <%= if @active_scene do %>
-        <button class="ring-item ring-item-danger" phx-click="ring_action" phx-value-action="end_scene" data-tooltip="End Scene" data-confirm="End this scene? This clears stress and removes boosts.">
-          <.icon name="hero-stop" class="w-3.5 h-3.5" />
-        </button>
-        <button class="ring-item" phx-click="ring_action" phx-value-action="add_zone" data-tooltip="Add Zone">
-          <.icon name="hero-map-pin" class="w-3.5 h-3.5" />
-        </button>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp table_modal(%{modal: nil} = assigns), do: ~H""
-
-  defp table_modal(%{modal: "scene_start"} = assigns) do
-    ~H"""
-    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60" phx-click="close_table_modal">
-      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl" phx-click-away="close_table_modal">
-        <h3 class="text-lg font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
-          Start Scene
-        </h3>
-        <form phx-submit="submit_table_modal" class="space-y-3">
-          <div>
-            <label class="block text-sm text-amber-200/70 mb-1">Scene Name</label>
-            <input type="text" name="name" placeholder="Dockside Warehouse"
-              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" />
-          </div>
-          <div>
-            <label class="block text-sm text-amber-200/70 mb-1">Description</label>
-            <input type="text" name="scene_description" placeholder="A brief framing of the scene"
-              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" />
-          </div>
-          <div>
-            <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
-            <textarea name="gm_notes" placeholder="Private prep notes..." rows="3"
-              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" />
-          </div>
-          <div class="flex gap-2 pt-2">
-            <button type="submit"
-              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm">
-              Start
-            </button>
-            <button type="button" phx-click="close_table_modal"
-              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm">
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-    """
-  end
-
-  defp table_modal(%{modal: "zone_create"} = assigns) do
-    ~H"""
-    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60" phx-click="close_table_modal">
-      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl" phx-click-away="close_table_modal">
-        <h3 class="text-lg font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
-          Add Zone
-        </h3>
-        <form phx-submit="submit_table_modal" class="space-y-3">
-          <div>
-            <label class="block text-sm text-amber-200/70 mb-1">Zone Name</label>
-            <input type="text" name="name" placeholder="Back Alley"
-              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" />
-          </div>
-          <p class="text-xs text-amber-200/40">Zone will start hidden. Reveal it from the table when ready.</p>
-          <div class="flex gap-2 pt-2">
-            <button type="submit"
-              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm">
-              Create
-            </button>
-            <button type="button" phx-click="close_table_modal"
-              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm">
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-    """
-  end
-
-  defp table_modal(%{modal: "switch_scene"} = assigns) do
-    active_scenes =
-      if assigns[:state], do: Enum.filter(assigns.state.scenes, &(&1.status == :active)), else: []
-    assigns = assign(assigns, :active_scenes, active_scenes)
-
-    ~H"""
-    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60" phx-click="close_table_modal">
-      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl" phx-click-away="close_table_modal">
-        <h3 class="text-lg font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
-          Switch Scene
-        </h3>
-        <div class="space-y-2">
-          <%= for scene <- @active_scenes do %>
-            <button
-              phx-click="ring_action"
-              phx-value-action="switch_scene"
-              phx-value-scene-id={scene.id}
-              class="w-full text-left px-3 py-2 bg-amber-900/30 border border-amber-700/20 rounded-lg hover:bg-amber-800/40 transition"
-            >
-              <div class="text-sm text-amber-100 font-bold" style="font-family: 'Patrick Hand', cursive;">
-                {scene.name || "(null scene)"}
-              </div>
-              <%= if scene.description do %>
-                <div class="text-xs text-amber-200/40">{scene.description}</div>
-              <% end %>
-            </button>
-          <% end %>
-        </div>
-        <button type="button" phx-click="close_table_modal"
-          class="w-full mt-3 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm">
-          Cancel
-        </button>
-      </div>
-    </div>
-    """
-  end
-
-  defp table_modal(assigns), do: ~H""
-
   # --- Helper functions ---
-
-  defp is_localhost?(socket) do
-    case get_connect_info(socket, :peer_data) do
-      %{address: {127, 0, 0, 1}} -> true
-      %{address: {0, 0, 0, 0, 0, 0, 0, 1}} -> true
-      _ -> false
-    end
-  rescue
-    _ -> false
-  end
-
-  defp load_bookmark_participants(bookmark_id) do
-    require Ash.Query
-
-    Fate.Game.BookmarkParticipant
-    |> Ash.Query.filter(bookmark_id: bookmark_id)
-    |> Ash.Query.load(:participant)
-    |> Ash.read!()
-  rescue
-    e ->
-      require Logger
-      Logger.error("Failed to load participants: #{inspect(e)}")
-      []
-  end
 
   defp active_scene_id(nil), do: "none"
   defp active_scene_id(state), do: state.head_event_id || "none"
@@ -1503,20 +874,14 @@ defmodule FateWeb.TableLive do
   defp visible_uncontrolled_entities(state, _is_gm) do
     state.entities
     |> Map.values()
-    |> Enum.filter(fn e ->
-      is_nil(e.controller_id) && !e.hidden
-    end)
+    |> Enum.filter(fn e -> is_nil(e.controller_id) && !e.hidden end)
   end
 
   defp hidden_entities(state) do
     state.entities
     |> Map.values()
-    |> Enum.filter(fn e ->
-      is_nil(e.controller_id) && e.hidden
-    end)
+    |> Enum.filter(fn e -> is_nil(e.controller_id) && e.hidden end)
   end
-
-  defp entity_hidden?(entity), do: entity.hidden
 
   defp reveal_entity(branch_id, entity_id, state) do
     entity = Map.get(state.entities, entity_id)
@@ -1552,25 +917,6 @@ defmodule FateWeb.TableLive do
     |> Enum.find(&(&1.id == aspect_id))
   end
 
-  defp find_aspect_owner(state, aspect_id) do
-    Enum.find_value(state.scenes, fn scene ->
-      cond do
-        Enum.any?(scene.aspects, &(&1.id == aspect_id)) ->
-          {"scene", scene.id}
-
-        zone = Enum.find(scene.zones, fn z -> Enum.any?(z.aspects, &(&1.id == aspect_id)) end) ->
-          {"zone", zone.id}
-
-        true ->
-          nil
-      end
-    end) || {"scene", nil}
-  end
-
-  defp visible_zone_aspects(aspects, is_gm) do
-    if is_gm, do: aspects, else: Enum.reject(aspects, & &1.hidden)
-  end
-
   defp entities_in_zone(state, zone_id) do
     state.entities
     |> Map.values()
@@ -1583,122 +929,12 @@ defmodule FateWeb.TableLive do
     |> Enum.filter(&(!is_nil(&1.controller_id)))
   end
 
-  defp controlled_entities(state, nil), do: Map.values(state.entities)
-
-  defp controlled_entities(state, participant) do
-    state.entities
-    |> Map.values()
-    |> Enum.filter(&(&1.controller_id == participant.id))
-  end
-
-  defp find_controlled_entity(state, participant_id) do
-    state.entities
-    |> Map.values()
-    |> Enum.find(&(&1.controller_id == participant_id))
-  end
-
-  defp other_participants(participants, current) do
-    Enum.reject(participants, fn bp ->
-      current && bp.participant_id == current.id
-    end)
-  end
-
   defp scene_aspects(state, is_gm, scene_id) do
     state.scenes
     |> Enum.filter(&(&1.id == scene_id))
     |> Enum.flat_map(fn scene ->
       scene.aspects ++ Enum.flat_map(scene.zones, & &1.aspects)
     end)
-    |> Enum.filter(fn aspect ->
-      is_gm || !aspect.hidden
-    end)
-  end
-
-  defp visible_aspects(aspects, is_gm) do
-    if is_gm, do: aspects, else: Enum.reject(aspects, & &1.hidden)
-  end
-
-  defp aspect_style(aspect) do
-    case aspect.role do
-      :high_concept -> "bg-amber-100 border-l-2 border-amber-500"
-      :trouble -> "bg-red-100 border-l-2 border-red-400"
-      :boost -> "bg-yellow-100 border-l-2 border-yellow-400 italic"
-      :situation -> "bg-blue-100 border-l-2 border-blue-400"
-      :consequence -> "bg-red-50 border-l-2 border-red-300"
-      _ -> "bg-gray-100 border-l-2 border-gray-400"
-    end
-  end
-
-  defp aspect_card_bg(aspect) do
-    case aspect.role do
-      :boost -> "background: #fef9c3; transform: rotate(-1deg);"
-      :situation -> "background: #bfdbfe; transform: rotate(1deg);"
-      _ -> "background: #fef3c7;"
-    end
-  end
-
-  defp rating_label(rating) do
-    labels = %{
-      8 => "+8 Legendary",
-      7 => "+7 Epic",
-      6 => "+6 Fantastic",
-      5 => "+5 Superb",
-      4 => "+4 Great",
-      3 => "+3 Good",
-      2 => "+2 Fair",
-      1 => "+1 Average",
-      0 => "+0 Mediocre",
-      -1 => "-1 Terrible",
-      -2 => "-2 Abysmal"
-    }
-
-    Map.get(labels, rating, "+#{rating}")
-  end
-
-  defp stress_summary(entity) do
-    entity.stress_tracks
-    |> Enum.map(fn track ->
-      checked = length(track.checked)
-      "#{track.label}: #{checked}/#{track.boxes}"
-    end)
-    |> Enum.join(", ")
-  end
-
-  defp tent_style(:south, size) do
-    height = trunc(size * 100)
-    "bottom: 0; left: 0; right: 0; height: #{height}vh; background: rgba(30, 20, 10, 0.85); border-top: 2px solid rgba(180, 140, 80, 0.3);"
-  end
-
-  defp tent_style(:north, size) do
-    height = trunc(size * 100)
-    "top: 0; left: 0; right: 0; height: #{height}vh; background: rgba(30, 20, 10, 0.85); border-bottom: 2px solid rgba(180, 140, 80, 0.3);"
-  end
-
-  defp tent_style(:west, size) do
-    width = trunc(size * 100)
-    "top: 0; left: 0; bottom: 0; width: #{width}vw; background: rgba(30, 20, 10, 0.85); border-right: 2px solid rgba(180, 140, 80, 0.3);"
-  end
-
-  defp tent_style(:east, size) do
-    width = trunc(size * 100)
-    "top: 0; right: 0; bottom: 0; width: #{width}vw; background: rgba(30, 20, 10, 0.85); border-left: 2px solid rgba(180, 140, 80, 0.3);"
-  end
-
-  defp other_tent_style(index, total, dock_position) do
-    fraction = (index + 1) / (total + 1)
-
-    case dock_position do
-      :south ->
-        "top: #{trunc(fraction * 60)}%; left: #{if rem(index, 2) == 0, do: "2%", else: "auto"}; right: #{if rem(index, 2) == 1, do: "2%", else: "auto"};"
-
-      :north ->
-        "bottom: #{trunc(fraction * 60)}%; left: #{if rem(index, 2) == 0, do: "2%", else: "auto"}; right: #{if rem(index, 2) == 1, do: "2%", else: "auto"};"
-
-      :west ->
-        "top: #{if rem(index, 2) == 0, do: "2%", else: "auto"}; bottom: #{if rem(index, 2) == 1, do: "2%", else: "auto"}; right: #{trunc(fraction * 40)}%;"
-
-      :east ->
-        "top: #{if rem(index, 2) == 0, do: "2%", else: "auto"}; bottom: #{if rem(index, 2) == 1, do: "2%", else: "auto"}; left: #{trunc(fraction * 40)}%;"
-    end
+    |> Enum.filter(fn aspect -> is_gm || !aspect.hidden end)
   end
 end

@@ -4,20 +4,21 @@ defmodule Fate.Game.Event do
     data_layer: AshPostgres.DataLayer
 
   postgres do
-    table "events"
-    repo Fate.Repo
+    table("events")
+    repo(Fate.Repo)
   end
 
   attributes do
-    uuid_primary_key :id
+    uuid_primary_key(:id)
 
-    attribute :parent_id, :uuid, allow_nil?: true
+    attribute(:parent_id, :uuid, allow_nil?: true)
 
-    attribute :timestamp, :utc_datetime_usec,
+    attribute(:timestamp, :utc_datetime_usec,
       allow_nil?: false,
       default: &DateTime.utc_now/0
+    )
 
-    attribute :type, :atom,
+    attribute(:type, :atom,
       allow_nil?: false,
       constraints: [
         one_of: [
@@ -59,28 +60,29 @@ defmodule Fate.Game.Event do
           :bookmark_create
         ]
       ]
+    )
 
-    attribute :actor_id, :string, allow_nil?: true
-    attribute :target_id, :string, allow_nil?: true
-    attribute :exchange_id, :uuid, allow_nil?: true
-    attribute :description, :string, allow_nil?: true
+    attribute(:actor_id, :string, allow_nil?: true)
+    attribute(:target_id, :string, allow_nil?: true)
+    attribute(:exchange_id, :uuid, allow_nil?: true)
+    attribute(:description, :string, allow_nil?: true)
 
-    attribute :detail, :map, allow_nil?: true
+    attribute(:detail, :map, allow_nil?: true)
   end
 
   relationships do
     belongs_to :parent, __MODULE__ do
-      source_attribute :parent_id
-      destination_attribute :id
-      allow_nil? true
+      source_attribute(:parent_id)
+      destination_attribute(:id)
+      allow_nil?(true)
     end
   end
 
   actions do
-    defaults [:read]
+    defaults([:read])
 
     create :append do
-      accept [
+      accept([
         :parent_id,
         :type,
         :actor_id,
@@ -88,13 +90,13 @@ defmodule Fate.Game.Event do
         :exchange_id,
         :description,
         :detail
-      ]
+      ])
     end
 
     update :edit do
-      accept [:parent_id, :type, :actor_id, :target_id, :description, :detail]
+      accept([:parent_id, :type, :actor_id, :target_id, :description, :detail])
     end
 
-    destroy :delete
+    destroy(:delete)
   end
 end

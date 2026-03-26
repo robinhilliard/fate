@@ -5,9 +5,17 @@ This is a web application written using the Phoenix web framework.
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
+### Project-specific conventions
+
+- **Full-screen LiveViews**: The main LiveViews (`TableLive`, `ActionsLive`) intentionally skip `Layouts.app` and render full-screen via `root.html.heex` only. This is a deliberate design choice for the tabletop interface
+- **No DaisyUI**: DaisyUI has been removed. All components use raw Tailwind CSS classes
+- **Shared helpers**: Use `FateWeb.Helpers` for cross-LiveView utility functions (e.g. `localhost?/1`)
+- **Table components**: Shared function components live in `FateWeb.TableComponents` — import them rather than duplicating
+- **Business logic**: Bookmark lifecycle operations go in `Fate.Game.Bookmarks`, not in LiveViews. Demo seed data lives in `Fate.Game.Demo`
+
 ### Phoenix v1.8 guidelines
 
-- **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
+- **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content (except full-screen views — see Project-specific conventions above)
 - The `MyAppWeb.Layouts` module is aliased in the `my_app_web.ex` file, so you can use it without needing to alias it again
 - Anytime you run into errors with no `current_scope` assign:
   - You failed to follow the Authenticated Routes guidelines, or you failed to pass `current_scope` to `<Layouts.app>`

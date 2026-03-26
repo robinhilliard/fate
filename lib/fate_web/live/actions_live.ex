@@ -41,7 +41,6 @@ defmodule FateWeb.ActionsLive do
     zone_modify: "Modify Zone"
   }
 
-  @exchange_types ~w(roll_attack roll_defend roll_overcome roll_create_advantage invoke shifts_resolved redirect_hit stress_apply consequence_take concede taken_out)a
   @roll_types ~w(roll_attack roll_defend roll_overcome roll_create_advantage)a
 
   @impl true
@@ -51,7 +50,7 @@ defmodule FateWeb.ActionsLive do
       |> assign(:bookmark_id, nil)
       |> assign(:events, [])
       |> assign(:state, nil)
-      |> assign(:is_gm, is_localhost?(socket))
+      |> assign(:is_gm, FateWeb.Helpers.localhost?(socket))
       |> assign(:log_tab, :bookmarks)
       |> assign(:selection, [])
       |> assign(:building, nil)
@@ -140,7 +139,9 @@ defmodule FateWeb.ActionsLive do
   end
 
   def handle_event("cancel_build", _params, socket) do
-    socket = socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)
+    socket =
+      socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)
+
     broadcast_exchange(socket)
     {:noreply, socket}
   end
@@ -181,12 +182,14 @@ defmodule FateWeb.ActionsLive do
     {index, _} = Integer.parse(index)
     steps = List.delete_at(socket.assigns.build_steps, index)
     editing = socket.assigns.editing_step
-    editing = cond do
-      editing == nil -> nil
-      editing == index -> nil
-      editing > index -> editing - 1
-      true -> editing
-    end
+
+    editing =
+      cond do
+        editing == nil -> nil
+        editing == index -> nil
+        editing > index -> editing - 1
+        true -> editing
+      end
 
     socket = socket |> assign(:build_steps, steps) |> assign(:editing_step, editing)
     broadcast_exchange(socket)
@@ -196,84 +199,99 @@ defmodule FateWeb.ActionsLive do
   def handle_event("update_step_field", %{"index" => index_str} = params, socket) do
     {index, _} = Integer.parse(index_str)
     steps = socket.assigns.build_steps
-    step = Enum.at(steps, index)
-    if step == nil, do: throw({:noreply, socket})
 
-    step =
-      step
-      |> maybe_update_field(params, "actor_id", :actor_id)
-      |> maybe_update_field(params, "target_id", :target_id)
+    case Enum.at(steps, index) do
+      nil ->
+        {:noreply, socket}
 
-    detail_fields = ~w(skill skill_rating difficulty severity aspect_text shifts outcome track_label box_index description)
+      step ->
+        step =
+          step
+          |> maybe_update_field(params, "actor_id", :actor_id)
+          |> maybe_update_field(params, "target_id", :target_id)
 
-    step =
-      Enum.reduce(detail_fields, step, fn field, acc ->
-        case params[field] do
-          nil -> acc
-          val -> put_in(acc.detail[field], parse_step_value(field, val))
-        end
-      end)
+        detail_fields =
+          ~w(skill skill_rating difficulty severity aspect_text shifts outcome track_label box_index description)
 
-    step =
-      if params["skill"] && socket.assigns.state do
-        actor = step.actor_id && Map.get(socket.assigns.state.entities, step.actor_id)
-        rating = actor && Map.get(actor.skills, params["skill"], 0) || 0
-        put_in(step.detail["skill_rating"], rating)
-      else
-        step
-      end
+        step =
+          Enum.reduce(detail_fields, step, fn field, acc ->
+            case params[field] do
+              nil -> acc
+              val -> put_in(acc.detail[field], parse_step_value(field, val))
+            end
+          end)
 
-    steps = List.replace_at(steps, index, step)
-    socket = assign(socket, :build_steps, steps)
-    broadcast_exchange(socket)
-    {:noreply, socket}
+        step =
+          if params["skill"] && socket.assigns.state do
+            actor = step.actor_id && Map.get(socket.assigns.state.entities, step.actor_id)
+            rating = (actor && Map.get(actor.skills, params["skill"], 0)) || 0
+            put_in(step.detail["skill_rating"], rating)
+          else
+            step
+          end
+
+        steps = List.replace_at(steps, index, step)
+        socket = assign(socket, :build_steps, steps)
+        broadcast_exchange(socket)
+        {:noreply, socket}
+    end
   end
 
   def handle_event("auto_roll_dice", %{"index" => index_str}, socket) do
     {index, _} = Integer.parse(index_str)
     steps = socket.assigns.build_steps
-    step = Enum.at(steps, index)
-    if step == nil, do: throw({:noreply, socket})
 
-    dice = for _ <- 1..4, do: Enum.random([-1, 0, 1])
-    step = put_in(step.detail["fudge_dice"], dice)
+    case Enum.at(steps, index) do
+      nil ->
+        {:noreply, socket}
 
-    dice_sum = Enum.sum(dice)
-    skill_rating = step.detail["skill_rating"] || 0
-    step = put_in(step.detail["raw_total"], dice_sum + skill_rating)
+      step ->
+        dice = for _ <- 1..4, do: Enum.random([-1, 0, 1])
+        step = put_in(step.detail["fudge_dice"], dice)
 
-    steps = List.replace_at(steps, index, step)
-    socket = assign(socket, :build_steps, steps)
-    broadcast_exchange(socket)
-    {:noreply, socket}
+        dice_sum = Enum.sum(dice)
+        skill_rating = step.detail["skill_rating"] || 0
+        step = put_in(step.detail["raw_total"], dice_sum + skill_rating)
+
+        steps = List.replace_at(steps, index, step)
+        socket = assign(socket, :build_steps, steps)
+        broadcast_exchange(socket)
+        {:noreply, socket}
+    end
   end
 
   def handle_event("toggle_die", %{"index" => index_str, "die" => die_str}, socket) do
     {step_index, _} = Integer.parse(index_str)
     {die_index, _} = Integer.parse(die_str)
     steps = socket.assigns.build_steps
-    step = Enum.at(steps, step_index)
-    if step == nil, do: throw({:noreply, socket})
 
-    dice = step.detail["fudge_dice"] || [0, 0, 0, 0]
-    current = Enum.at(dice, die_index, 0)
-    next_val = case current do
-      0 -> 1
-      1 -> -1
-      -1 -> 0
+    case Enum.at(steps, step_index) do
+      nil ->
+        {:noreply, socket}
+
+      step ->
+        dice = step.detail["fudge_dice"] || [0, 0, 0, 0]
+        current = Enum.at(dice, die_index, 0)
+
+        next_val =
+          case current do
+            0 -> 1
+            1 -> -1
+            -1 -> 0
+          end
+
+        dice = List.replace_at(dice, die_index, next_val)
+        step = put_in(step.detail["fudge_dice"], dice)
+
+        dice_sum = Enum.sum(dice)
+        skill_rating = step.detail["skill_rating"] || 0
+        step = put_in(step.detail["raw_total"], dice_sum + skill_rating)
+
+        steps = List.replace_at(steps, step_index, step)
+        socket = assign(socket, :build_steps, steps)
+        broadcast_exchange(socket)
+        {:noreply, socket}
     end
-
-    dice = List.replace_at(dice, die_index, next_val)
-    step = put_in(step.detail["fudge_dice"], dice)
-
-    dice_sum = Enum.sum(dice)
-    skill_rating = step.detail["skill_rating"] || 0
-    step = put_in(step.detail["raw_total"], dice_sum + skill_rating)
-
-    steps = List.replace_at(steps, step_index, step)
-    socket = assign(socket, :build_steps, steps)
-    broadcast_exchange(socket)
-    {:noreply, socket}
   end
 
   def handle_event("commit_exchange", _params, socket) do
@@ -296,7 +314,9 @@ defmodule FateWeb.ActionsLive do
       end
     end)
 
-    socket = socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)
+    socket =
+      socket |> assign(:building, nil) |> assign(:build_steps, []) |> assign(:editing_step, nil)
+
     broadcast_exchange(socket)
     {:noreply, socket}
   end
@@ -309,7 +329,11 @@ defmodule FateWeb.ActionsLive do
      |> assign(:prefill_entity_id, params["entity_id"])}
   end
 
-  def handle_event("entity_dropped", %{"entity_id" => entity_id, "action_type" => action_type, "action_category" => category}, socket) do
+  def handle_event(
+        "entity_dropped",
+        %{"entity_id" => entity_id, "action_type" => action_type, "action_category" => category},
+        socket
+      ) do
     case category do
       "exchange" ->
         type = String.to_existing_atom(action_type)
@@ -395,6 +419,7 @@ defmodule FateWeb.ActionsLive do
 
         "scene_end" ->
           active = socket.assigns.state.scenes |> Enum.find(&(&1.status == :active))
+
           if active do
             Engine.append_event(socket.assigns.bookmark_id, %{
               type: :scene_end,
@@ -489,17 +514,27 @@ defmodule FateWeb.ActionsLive do
 
           case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
             {:ok, %{head_event_id: head_id} = parent} when head_id != nil ->
-              with {:ok, bmk_event} <- Ash.create(Fate.Game.Event, %{
-                     parent_id: head_id,
-                     type: :bookmark_create,
-                     description: params["name"],
-                     detail: %{"name" => params["name"]}
-                   }, action: :append),
-                   {:ok, new_bm} <- Ash.create(Fate.Game.Bookmark, %{
-                     name: params["name"],
-                     head_event_id: bmk_event.id,
-                     parent_bookmark_id: parent.id
-                   }, action: :create) do
+              with {:ok, bmk_event} <-
+                     Ash.create(
+                       Fate.Game.Event,
+                       %{
+                         parent_id: head_id,
+                         type: :bookmark_create,
+                         description: params["name"],
+                         detail: %{"name" => params["name"]}
+                       },
+                       action: :append
+                     ),
+                   {:ok, new_bm} <-
+                     Ash.create(
+                       Fate.Game.Bookmark,
+                       %{
+                         name: params["name"],
+                         head_event_id: bmk_event.id,
+                         parent_bookmark_id: parent.id
+                       },
+                       action: :create
+                     ) do
                 {:ok, nil, new_bm}
               end
 
@@ -539,6 +574,7 @@ defmodule FateWeb.ActionsLive do
         end
 
         require Ash.Query
+
         case Ash.read(Fate.Game.Event |> Ash.Query.filter(parent_id: event_id)) do
           {:ok, children} ->
             Enum.each(children, fn child ->
@@ -555,7 +591,12 @@ defmodule FateWeb.ActionsLive do
 
             case Engine.derive_state(bookmark_id) do
               {:ok, state} ->
-                Phoenix.PubSub.broadcast(Fate.PubSub, "bookmark:#{bookmark_id}", {:state_updated, state})
+                Phoenix.PubSub.broadcast(
+                  Fate.PubSub,
+                  "bookmark:#{bookmark_id}",
+                  {:state_updated, state}
+                )
+
                 {:noreply, socket |> assign(:events, events) |> assign(:state, state)}
 
               _ ->
@@ -563,7 +604,8 @@ defmodule FateWeb.ActionsLive do
             end
 
           {:error, _reason} ->
-            {:noreply, put_flash(socket, :error, "Cannot delete: other events depend on this one")}
+            {:noreply,
+             put_flash(socket, :error, "Cannot delete: other events depend on this one")}
         end
 
       _ ->
@@ -594,7 +636,13 @@ defmodule FateWeb.ActionsLive do
             <button
               phx-click="set_log_tab"
               phx-value-tab="bookmarks"
-              class={["text-lg font-bold transition", if(@log_tab == :bookmarks, do: "text-amber-100", else: "text-amber-200/30 hover:text-amber-200/60")]}
+              class={[
+                "text-lg font-bold transition",
+                if(@log_tab == :bookmarks,
+                  do: "text-amber-100",
+                  else: "text-amber-200/30 hover:text-amber-200/60"
+                )
+              ]}
               style="font-family: 'Permanent Marker', cursive;"
             >
               Bookmarks
@@ -602,7 +650,13 @@ defmodule FateWeb.ActionsLive do
             <button
               phx-click="set_log_tab"
               phx-value-tab="events"
-              class={["text-lg font-bold transition", if(@log_tab == :events, do: "text-amber-100", else: "text-amber-200/30 hover:text-amber-200/60")]}
+              class={[
+                "text-lg font-bold transition",
+                if(@log_tab == :events,
+                  do: "text-amber-100",
+                  else: "text-amber-200/30 hover:text-amber-200/60"
+                )
+              ]}
               style="font-family: 'Permanent Marker', cursive;"
             >
               Events
@@ -621,7 +675,12 @@ defmodule FateWeb.ActionsLive do
             <% else %>
               <%= for {event, index} <- @events |> Enum.reverse() |> Enum.with_index() do %>
                 <% real_index = length(@events) - 1 - index %>
-                <.event_row event={event} index={real_index} state={@state} immutable={real_index <= boundary} />
+                <.event_row
+                  event={event}
+                  index={real_index}
+                  state={@state}
+                  immutable={real_index <= boundary}
+                />
               <% end %>
             <% end %>
           </div>
@@ -636,22 +695,36 @@ defmodule FateWeb.ActionsLive do
       <div class="w-1/2 flex flex-col">
         <%= if @log_tab == :bookmarks do %>
           <div class="flex-1 overflow-y-auto p-6">
-            <h2 class="text-xl font-bold text-amber-100 mb-4" style="font-family: 'Permanent Marker', cursive;">
+            <h2
+              class="text-xl font-bold text-amber-100 mb-4"
+              style="font-family: 'Permanent Marker', cursive;"
+            >
               Managing Bookmarks
             </h2>
-            <div class="space-y-3 text-sm text-amber-200/60" style="font-family: 'Patrick Hand', cursive; font-size: 1.1rem; line-height: 1.6;">
-              <p>Bookmarks organize your games as a tree. Each bookmark is a snapshot of game state that can branch into new timelines.</p>
+            <div
+              class="space-y-3 text-sm text-amber-200/60"
+              style="font-family: 'Patrick Hand', cursive; font-size: 1.1rem; line-height: 1.6;"
+            >
               <p>
-                <span class="text-amber-100">Create Bookmark</span> —
-                Click the <.icon name="hero-plus-circle" class="w-4 h-4 inline text-green-400/60" /> button on any bookmark to create a child. The child inherits all entities, scenes, and aspects from the parent.
+                Bookmarks organize your games as a tree. Each bookmark is a snapshot of game state that can branch into new timelines.
+              </p>
+              <p>
+                <span class="text-amber-100">Create Bookmark</span>
+                —
+                Click the <.icon name="hero-plus-circle" class="w-4 h-4 inline text-green-400/60" />
+                button on any bookmark to create a child. The child inherits all entities, scenes, and aspects from the parent.
               </p>
               <p>
                 <span class="text-amber-100">Navigate</span> —
                 Click a bookmark name to open it on the table. Only leaf bookmarks (those without children) can be opened.
               </p>
               <p>
-                <span class="text-amber-100">Locked bookmarks</span> —
-                Once a bookmark has children, it becomes locked (<.icon name="hero-lock-closed" class="w-3.5 h-3.5 inline text-amber-400/30" />). Its events are immutable — they form the shared foundation for all child timelines.
+                <span class="text-amber-100">Locked bookmarks</span>
+                —
+                Once a bookmark has children, it becomes locked (<.icon
+                  name="hero-lock-closed"
+                  class="w-3.5 h-3.5 inline text-amber-400/30"
+                />). Its events are immutable — they form the shared foundation for all child timelines.
               </p>
               <p>
                 <span class="text-amber-100">Typical workflow</span> —
@@ -660,27 +733,27 @@ defmodule FateWeb.ActionsLive do
             </div>
           </div>
         <% else %>
-        <div class="p-4 border-b border-amber-900/30">
-          <h2 class="text-xl font-bold" style="font-family: 'Permanent Marker', cursive;">
-            Action Palette
-          </h2>
-        </div>
+          <div class="p-4 border-b border-amber-900/30">
+            <h2 class="text-xl font-bold" style="font-family: 'Permanent Marker', cursive;">
+              Action Palette
+            </h2>
+          </div>
 
-        <div class="flex-1 overflow-y-auto p-4">
-          <%= if @building do %>
-            <%!-- Exchange builder --%>
-            <.exchange_builder
-              building={@building}
-              build_steps={@build_steps}
-              editing_step={@editing_step}
-              state={@state}
-              selection={@selection}
-            />
-          <% else %>
-            <%!-- Quick actions + exchange starters --%>
-            <.action_menu state={@state} />
-          <% end %>
-        </div>
+          <div class="flex-1 overflow-y-auto p-4">
+            <%= if @building do %>
+              <%!-- Exchange builder --%>
+              <.exchange_builder
+                building={@building}
+                build_steps={@build_steps}
+                editing_step={@editing_step}
+                state={@state}
+                selection={@selection}
+              />
+            <% else %>
+              <%!-- Quick actions + exchange starters --%>
+              <.action_menu state={@state} />
+            <% end %>
+          </div>
         <% end %>
       </div>
     </div>
@@ -734,45 +807,117 @@ defmodule FateWeb.ActionsLive do
     detail = event.detail || %{}
 
     case event.type do
-      :create_campaign -> "Campaign: #{detail["campaign_name"] || event.description}"
-      :set_system -> "System: #{detail["system"] || "core"}"
-      :entity_create -> "New #{detail["kind"] || "entity"}: #{detail["name"]}"
-      :entity_modify -> event.description || "Edit #{detail["name"] || "entity"}"
-      :entity_remove -> "Remove #{event.target_id}"
-      :aspect_create -> "+ #{detail["description"]}"
+      :create_campaign ->
+        "Campaign: #{detail["campaign_name"] || event.description}"
+
+      :set_system ->
+        "System: #{detail["system"] || "core"}"
+
+      :entity_create ->
+        "New #{detail["kind"] || "entity"}: #{detail["name"]}"
+
+      :entity_modify ->
+        event.description || "Edit #{detail["name"] || "entity"}"
+
+      :entity_remove ->
+        "Remove #{event.target_id}"
+
+      :aspect_create ->
+        "+ #{detail["description"]}"
+
       :aspect_remove ->
-        desc = (event.description || "aspect")
+        desc =
+          (event.description || "aspect")
           |> String.replace(~r/^(Hide|Reveal|Remove aspect): /i, "")
+
         "- #{desc}"
-      :aspect_modify -> event.description || "Edit aspect"
-      :aspect_compel -> "Compel: #{detail["aspect_id"]}"
-      :skill_set -> "#{detail["skill"]} → +#{detail["rating"]}"
-      :stunt_add -> "Stunt: #{detail["name"]}"
-      :stunt_remove -> "Remove stunt"
-      :scene_start -> "Scene: #{detail["name"]}"
-      :scene_end -> "End scene"
-      :zone_create -> "Zone: #{detail["name"]}"
-      :zone_modify -> "#{if detail["hidden"] == false, do: "Reveal", else: "Hide"} zone"
-      :entity_enter_scene -> "Enter scene"
-      :entity_move -> "Move to zone"
-      :roll_attack -> "Attack #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
-      :roll_defend -> "Defend #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
-      :roll_overcome -> "Overcome #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
-      :roll_create_advantage -> "Advantage #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
-      :invoke -> "Invoke: #{detail["description"] || detail["aspect_id"]}"
-      :shifts_resolved -> "#{detail["shifts"] || 0} shifts — #{detail["outcome"]}"
-      :redirect_hit -> "Redirect hit"
-      :stress_apply -> "Stress ×#{detail["box_index"]}"
-      :stress_clear -> "Clear stress"
-      :consequence_take -> "#{detail["severity"]}: #{detail["aspect_text"]}"
-      :consequence_recover -> "Recover consequence"
-      :fate_point_spend -> "Spend FP"
-      :fate_point_earn -> "Earn FP"
-      :fate_point_refresh -> "Refresh FP"
-      :concede -> "Concede"
-      :taken_out -> "Taken out!"
-      :mook_eliminate -> "Mook eliminated"
-      _ -> event.description || to_string(event.type)
+
+      :aspect_modify ->
+        event.description || "Edit aspect"
+
+      :aspect_compel ->
+        "Compel: #{detail["aspect_id"]}"
+
+      :skill_set ->
+        "#{detail["skill"]} → +#{detail["rating"]}"
+
+      :stunt_add ->
+        "Stunt: #{detail["name"]}"
+
+      :stunt_remove ->
+        "Remove stunt"
+
+      :scene_start ->
+        "Scene: #{detail["name"]}"
+
+      :scene_end ->
+        "End scene"
+
+      :zone_create ->
+        "Zone: #{detail["name"]}"
+
+      :zone_modify ->
+        "#{if detail["hidden"] == false, do: "Reveal", else: "Hide"} zone"
+
+      :entity_enter_scene ->
+        "Enter scene"
+
+      :entity_move ->
+        "Move to zone"
+
+      :roll_attack ->
+        "Attack #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
+
+      :roll_defend ->
+        "Defend #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
+
+      :roll_overcome ->
+        "Overcome #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
+
+      :roll_create_advantage ->
+        "Advantage #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
+
+      :invoke ->
+        "Invoke: #{detail["description"] || detail["aspect_id"]}"
+
+      :shifts_resolved ->
+        "#{detail["shifts"] || 0} shifts — #{detail["outcome"]}"
+
+      :redirect_hit ->
+        "Redirect hit"
+
+      :stress_apply ->
+        "Stress ×#{detail["box_index"]}"
+
+      :stress_clear ->
+        "Clear stress"
+
+      :consequence_take ->
+        "#{detail["severity"]}: #{detail["aspect_text"]}"
+
+      :consequence_recover ->
+        "Recover consequence"
+
+      :fate_point_spend ->
+        "Spend FP"
+
+      :fate_point_earn ->
+        "Earn FP"
+
+      :fate_point_refresh ->
+        "Refresh FP"
+
+      :concede ->
+        "Concede"
+
+      :taken_out ->
+        "Taken out!"
+
+      :mook_eliminate ->
+        "Mook eliminated"
+
+      _ ->
+        event.description || to_string(event.type)
     end
   end
 
@@ -783,7 +928,9 @@ defmodule FateWeb.ActionsLive do
         <h3 class="text-lg font-bold" style="font-family: 'Patrick Hand', cursive;">
           Building: {exchange_label(@building)}
         </h3>
-        <button phx-click="cancel_build" class="text-sm text-red-400 hover:text-red-300">Cancel</button>
+        <button phx-click="cancel_build" class="text-sm text-red-400 hover:text-red-300">
+          Cancel
+        </button>
       </div>
 
       <%!-- Available step tiles --%>
@@ -857,9 +1004,13 @@ defmodule FateWeb.ActionsLive do
       <%= if roll_step?(@step.type) do %>
         <div class="flex gap-0.5">
           <%= for val <- @step.detail["fudge_dice"] || [0,0,0,0] do %>
-            <span class={"w-4 h-4 rounded text-center text-xs font-bold leading-4 #{die_class(val)}"}>{die_display(val)}</span>
+            <span class={"w-4 h-4 rounded text-center text-xs font-bold leading-4 #{die_class(val)}"}>
+              {die_display(val)}
+            </span>
           <% end %>
-          <span class="text-xs text-amber-200/60 ml-1 font-bold">{format_rating(@step.detail["raw_total"] || 0)}</span>
+          <span class="text-xs text-amber-200/60 ml-1 font-bold">
+            {format_rating(@step.detail["raw_total"] || 0)}
+          </span>
         </div>
       <% end %>
       <button
@@ -893,8 +1044,19 @@ defmodule FateWeb.ActionsLive do
           {step_type_label(@step.type)}
         </span>
         <div class="flex gap-1">
-          <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
-          <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
+          <button
+            phx-click="close_step_form"
+            class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded"
+          >
+            Done
+          </button>
+          <button
+            phx-click="remove_step"
+            phx-value-index={@index}
+            class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       </div>
 
@@ -925,7 +1087,9 @@ defmodule FateWeb.ActionsLive do
         >
           <option value="">Select...</option>
           <%= for {skill, rating} <- @skills do %>
-            <option value={skill} selected={skill == @step.detail["skill"]}>{skill} ({format_rating(rating)})</option>
+            <option value={skill} selected={skill == @step.detail["skill"]}>
+              {skill} ({format_rating(rating)})
+            </option>
           <% end %>
         </select>
       </div>
@@ -954,11 +1118,16 @@ defmodule FateWeb.ActionsLive do
             <.icon name="hero-cube-transparent" class="w-4 h-4 inline -mt-0.5" /> Roll
           </button>
           <div class="text-right">
-            <div class="text-lg font-bold text-amber-100" style="font-family: 'Permanent Marker', cursive;">
-              {format_rating((@step.detail["raw_total"] || 0))}
+            <div
+              class="text-lg font-bold text-amber-100"
+              style="font-family: 'Permanent Marker', cursive;"
+            >
+              {format_rating(@step.detail["raw_total"] || 0)}
             </div>
             <div class="text-xs text-amber-200/30">
-              dice {format_rating(Enum.sum(@step.detail["fudge_dice"] || [0,0,0,0]))} + skill {format_rating(@step.detail["skill_rating"] || 0)}
+              dice {format_rating(Enum.sum(@step.detail["fudge_dice"] || [0, 0, 0, 0]))} + skill {format_rating(
+                @step.detail["skill_rating"] || 0
+              )}
             </div>
           </div>
         </div>
@@ -1003,17 +1172,39 @@ defmodule FateWeb.ActionsLive do
 
   defp step_form(%{step: %{type: :invoke}} = assigns) do
     state = assigns.state
+
     aspects =
       if state do
-        entity_aspects = state.entities |> Map.values() |> Enum.flat_map(fn e ->
-          Enum.map(e.aspects, &%{id: &1.id, label: "#{e.name}: #{&1.description}", free_invokes: &1.free_invokes})
-        end)
-        scene_aspects = state.scenes |> Enum.filter(&(&1.status == :active)) |> Enum.flat_map(fn s ->
-          Enum.map(s.aspects, &%{id: &1.id, label: "Scene: #{&1.description}", free_invokes: &1.free_invokes}) ++
-          Enum.flat_map(s.zones, fn z ->
-            Enum.map(z.aspects, &%{id: &1.id, label: "#{z.name}: #{&1.description}", free_invokes: &1.free_invokes})
+        entity_aspects =
+          state.entities
+          |> Map.values()
+          |> Enum.flat_map(fn e ->
+            Enum.map(
+              e.aspects,
+              &%{id: &1.id, label: "#{e.name}: #{&1.description}", free_invokes: &1.free_invokes}
+            )
           end)
-        end)
+
+        scene_aspects =
+          state.scenes
+          |> Enum.filter(&(&1.status == :active))
+          |> Enum.flat_map(fn s ->
+            Enum.map(
+              s.aspects,
+              &%{id: &1.id, label: "Scene: #{&1.description}", free_invokes: &1.free_invokes}
+            ) ++
+              Enum.flat_map(s.zones, fn z ->
+                Enum.map(
+                  z.aspects,
+                  &%{
+                    id: &1.id,
+                    label: "#{z.name}: #{&1.description}",
+                    free_invokes: &1.free_invokes
+                  }
+                )
+              end)
+          end)
+
         entity_aspects ++ scene_aspects
       else
         []
@@ -1024,10 +1215,23 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
       <div class="flex items-center justify-between">
-        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">Invoke Aspect</span>
+        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
+          Invoke Aspect
+        </span>
         <div class="flex gap-1">
-          <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
-          <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
+          <button
+            phx-click="close_step_form"
+            class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded"
+          >
+            Done
+          </button>
+          <button
+            phx-click="remove_step"
+            phx-value-index={@index}
+            class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       </div>
       <div>
@@ -1057,23 +1261,46 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
       <div class="flex items-center justify-between">
-        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">Resolve Shifts</span>
+        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
+          Resolve Shifts
+        </span>
         <div class="flex gap-1">
-          <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
-          <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
+          <button
+            phx-click="close_step_form"
+            class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded"
+          >
+            Done
+          </button>
+          <button
+            phx-click="remove_step"
+            phx-value-index={@index}
+            class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       </div>
       <div class="flex gap-3">
         <div>
           <label class="block text-xs text-amber-200/50 mb-1">Shifts</label>
-          <input type="number" phx-change="update_step_field" phx-value-index={@index} name="shifts"
-            value={@step.detail["shifts"]} placeholder="0"
-            class="w-20 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm" />
+          <input
+            type="number"
+            phx-change="update_step_field"
+            phx-value-index={@index}
+            name="shifts"
+            value={@step.detail["shifts"]}
+            placeholder="0"
+            class="w-20 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          />
         </div>
         <div class="flex-1">
           <label class="block text-xs text-amber-200/50 mb-1">Target</label>
-          <select phx-change="update_step_field" phx-value-index={@index} name="target_id"
-            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm">
+          <select
+            phx-change="update_step_field"
+            phx-value-index={@index}
+            name="target_id"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          >
             <option value="">None</option>
             <%= for e <- @entities do %>
               <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
@@ -1092,16 +1319,33 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
       <div class="flex items-center justify-between">
-        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">Take Consequence</span>
+        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
+          Take Consequence
+        </span>
         <div class="flex gap-1">
-          <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
-          <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
+          <button
+            phx-click="close_step_form"
+            class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded"
+          >
+            Done
+          </button>
+          <button
+            phx-click="remove_step"
+            phx-value-index={@index}
+            class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       </div>
       <div>
         <label class="block text-xs text-amber-200/50 mb-1">Entity</label>
-        <select phx-change="update_step_field" phx-value-index={@index} name="target_id"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm">
+        <select
+          phx-change="update_step_field"
+          phx-value-index={@index}
+          name="target_id"
+          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+        >
           <option value="">Select...</option>
           <%= for e <- @entities do %>
             <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
@@ -1111,19 +1355,33 @@ defmodule FateWeb.ActionsLive do
       <div class="flex gap-3">
         <div>
           <label class="block text-xs text-amber-200/50 mb-1">Severity</label>
-          <select phx-change="update_step_field" phx-value-index={@index} name="severity"
-            class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm">
+          <select
+            phx-change="update_step_field"
+            phx-value-index={@index}
+            name="severity"
+            class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          >
             <option value="mild" selected={@step.detail["severity"] == "mild"}>Mild (2)</option>
-            <option value="moderate" selected={@step.detail["severity"] == "moderate"}>Moderate (4)</option>
+            <option value="moderate" selected={@step.detail["severity"] == "moderate"}>
+              Moderate (4)
+            </option>
             <option value="severe" selected={@step.detail["severity"] == "severe"}>Severe (6)</option>
-            <option value="extreme" selected={@step.detail["severity"] == "extreme"}>Extreme (8)</option>
+            <option value="extreme" selected={@step.detail["severity"] == "extreme"}>
+              Extreme (8)
+            </option>
           </select>
         </div>
         <div class="flex-1">
           <label class="block text-xs text-amber-200/50 mb-1">Aspect Text</label>
-          <input type="text" phx-change="update_step_field" phx-value-index={@index} name="aspect_text"
-            value={@step.detail["aspect_text"]} placeholder="Broken Arm"
-            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm placeholder-amber-200/20" />
+          <input
+            type="text"
+            phx-change="update_step_field"
+            phx-value-index={@index}
+            name="aspect_text"
+            value={@step.detail["aspect_text"]}
+            placeholder="Broken Arm"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm placeholder-amber-200/20"
+          />
         </div>
       </div>
     </div>
@@ -1132,7 +1390,11 @@ defmodule FateWeb.ActionsLive do
 
   defp step_form(%{step: %{type: :stress_apply}} = assigns) do
     entities = if assigns.state, do: Map.values(assigns.state.entities), else: []
-    target = assigns.step.target_id && assigns.state && Map.get(assigns.state.entities, assigns.step.target_id)
+
+    target =
+      assigns.step.target_id && assigns.state &&
+        Map.get(assigns.state.entities, assigns.step.target_id)
+
     tracks = if target, do: target.stress_tracks, else: []
 
     assigns =
@@ -1143,16 +1405,33 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
       <div class="flex items-center justify-between">
-        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">Apply Stress</span>
+        <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
+          Apply Stress
+        </span>
         <div class="flex gap-1">
-          <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
-          <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
+          <button
+            phx-click="close_step_form"
+            class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded"
+          >
+            Done
+          </button>
+          <button
+            phx-click="remove_step"
+            phx-value-index={@index}
+            class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       </div>
       <div>
         <label class="block text-xs text-amber-200/50 mb-1">Entity</label>
-        <select phx-change="update_step_field" phx-value-index={@index} name="target_id"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm">
+        <select
+          phx-change="update_step_field"
+          phx-value-index={@index}
+          name="target_id"
+          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+        >
           <option value="">Select...</option>
           <%= for e <- @entities do %>
             <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
@@ -1163,18 +1442,31 @@ defmodule FateWeb.ActionsLive do
         <div class="flex gap-3">
           <div>
             <label class="block text-xs text-amber-200/50 mb-1">Track</label>
-            <select phx-change="update_step_field" phx-value-index={@index} name="track_label"
-              class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm">
+            <select
+              phx-change="update_step_field"
+              phx-value-index={@index}
+              name="track_label"
+              class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+            >
               <%= for t <- @tracks do %>
-                <option value={t.label} selected={t.label == @step.detail["track_label"]}>{t.label}</option>
+                <option value={t.label} selected={t.label == @step.detail["track_label"]}>
+                  {t.label}
+                </option>
               <% end %>
             </select>
           </div>
           <div>
             <label class="block text-xs text-amber-200/50 mb-1">Box</label>
-            <input type="number" phx-change="update_step_field" phx-value-index={@index} name="box_index"
-              value={@step.detail["box_index"]} placeholder="1" min="1"
-              class="w-16 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm" />
+            <input
+              type="number"
+              phx-change="update_step_field"
+              phx-value-index={@index}
+              name="box_index"
+              value={@step.detail["box_index"]}
+              placeholder="1"
+              min="1"
+              class="w-16 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+            />
           </div>
         </div>
       <% end %>
@@ -1189,8 +1481,19 @@ defmodule FateWeb.ActionsLive do
       <span class="text-sm flex-1" style="font-family: 'Patrick Hand', cursive;">
         {step_type_label(@step.type)}
       </span>
-      <button phx-click="close_step_form" class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded">Done</button>
-      <button phx-click="remove_step" phx-value-index={@index} class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1">✕</button>
+      <button
+        phx-click="close_step_form"
+        class="text-xs text-amber-200/50 hover:text-amber-200 px-2 py-1 bg-amber-900/40 rounded"
+      >
+        Done
+      </button>
+      <button
+        phx-click="remove_step"
+        phx-value-index={@index}
+        class="text-xs text-red-400/50 hover:text-red-400 px-2 py-1"
+      >
+        ✕
+      </button>
     </div>
     """
   end
@@ -1217,7 +1520,9 @@ defmodule FateWeb.ActionsLive do
               data-action-category="exchange"
               class={"px-4 py-3 border rounded-lg transition text-left cursor-pointer drop-target #{bg}"}
             >
-              <div class="font-bold text-sm" style="font-family: 'Permanent Marker', cursive;">{label}</div>
+              <div class="font-bold text-sm" style="font-family: 'Permanent Marker', cursive;">
+                {label}
+              </div>
               <div class="text-xs text-amber-200/30">{desc}</div>
             </button>
           <% end %>
@@ -1252,7 +1557,9 @@ defmodule FateWeb.ActionsLive do
           <div class="text-xs uppercase text-amber-200/40 mb-2 font-bold">Entities</div>
           <div class="space-y-0.5">
             <%= for {section, entities} <- grouped_entities(@state) do %>
-              <div class="text-xs uppercase text-amber-200/25 mt-2 mb-1 tracking-wider">{section}</div>
+              <div class="text-xs uppercase text-amber-200/25 mt-2 mb-1 tracking-wider">
+                {section}
+              </div>
               <%= for {entity, depth} <- entities do %>
                 <div
                   class="flex items-center gap-2 px-2 py-1 rounded hover:bg-amber-900/20 cursor-grab active:cursor-grabbing"
@@ -1264,7 +1571,9 @@ defmodule FateWeb.ActionsLive do
                   data-entity-name={entity.name}
                 >
                   <div class="w-3 h-3 rounded-full shrink-0" style={"background: #{entity.color};"} />
-                  <span class="text-sm" style="font-family: 'Patrick Hand', cursive;">{entity.name}</span>
+                  <span class="text-sm" style="font-family: 'Patrick Hand', cursive;">
+                    {entity.name}
+                  </span>
                   <span class="text-xs text-amber-200/30">{entity.kind}</span>
                   <%= if entity.fate_points do %>
                     <span class="ml-auto text-xs text-amber-200/50">FP: {entity.fate_points}</span>
@@ -1328,21 +1637,15 @@ defmodule FateWeb.ActionsLive do
     end
   end
 
-  defp is_localhost?(socket) do
-    case get_connect_info(socket, :peer_data) do
-      %{address: {127, 0, 0, 1}} -> true
-      %{address: {0, 0, 0, 0, 0, 0, 0, 1}} -> true
-      _ -> false
-    end
-  rescue
-    _ -> false
-  end
-
   defp bookmark_tree(assigns) do
     require Ash.Query
 
     bookmarks =
-      case Ash.read(Fate.Game.Bookmark |> Ash.Query.filter(status: :active) |> Ash.Query.sort(created_at: :asc)) do
+      case Ash.read(
+             Fate.Game.Bookmark
+             |> Ash.Query.filter(status: :active)
+             |> Ash.Query.sort(created_at: :asc)
+           ) do
         {:ok, bms} -> bms
         _ -> []
       end
@@ -1358,7 +1661,12 @@ defmodule FateWeb.ActionsLive do
     <% else %>
       <div class="space-y-1">
         <%= for bm <- @top_level do %>
-          <.bookmark_node bookmark={bm} children_map={@children_map} current_id={@bookmark_id} depth={0} />
+          <.bookmark_node
+            bookmark={bm}
+            children_map={@children_map}
+            current_id={@bookmark_id}
+            depth={0}
+          />
         <% end %>
       </div>
     <% end %>
@@ -1374,11 +1682,17 @@ defmodule FateWeb.ActionsLive do
     <div style={"margin-left: #{@depth * 16}px;"}>
       <div class={[
         "flex items-center gap-2 px-2 py-1.5 rounded transition text-sm",
-        if(@bookmark.id == @current_id, do: "bg-amber-800/40 border border-amber-600/30", else: "hover:bg-amber-900/20")
+        if(@bookmark.id == @current_id,
+          do: "bg-amber-800/40 border border-amber-600/30",
+          else: "hover:bg-amber-900/20"
+        )
       ]}>
         <%= if @has_children do %>
           <.icon name="hero-lock-closed" class="w-3.5 h-3.5 text-amber-400/30 shrink-0" />
-          <span class="flex-1 text-amber-200/40 truncate" style="font-family: 'Patrick Hand', cursive;">
+          <span
+            class="flex-1 text-amber-200/40 truncate"
+            style="font-family: 'Patrick Hand', cursive;"
+          >
             {@bookmark.name}
           </span>
         <% else %>
@@ -1404,7 +1718,12 @@ defmodule FateWeb.ActionsLive do
         </span>
       </div>
       <%= for child <- @children do %>
-        <.bookmark_node bookmark={child} children_map={@children_map} current_id={@current_id} depth={@depth + 1} />
+        <.bookmark_node
+          bookmark={child}
+          children_map={@children_map}
+          current_id={@current_id}
+          depth={@depth + 1}
+        />
       <% end %>
     </div>
     """
@@ -1428,9 +1747,6 @@ defmodule FateWeb.ActionsLive do
     end
   end
 
-  defp short_id(nil), do: "—"
-  defp short_id(id) when is_binary(id), do: String.slice(id, 0..7)
-
   defp format_dice([]), do: "—"
 
   defp format_dice(dice) do
@@ -1451,7 +1767,17 @@ defmodule FateWeb.ActionsLive do
   defp exchange_label(other), do: to_string(other)
 
   defp available_steps(:attack) do
-    [:roll_attack, :roll_defend, :invoke, :shifts_resolved, :stress_apply, :consequence_take, :redirect_hit, :concede, :taken_out]
+    [
+      :roll_attack,
+      :roll_defend,
+      :invoke,
+      :shifts_resolved,
+      :stress_apply,
+      :consequence_take,
+      :redirect_hit,
+      :concede,
+      :taken_out
+    ]
   end
 
   defp available_steps(:overcome) do
@@ -1485,22 +1811,13 @@ defmodule FateWeb.ActionsLive do
     ]
   end
 
-  defp decode_detail(nil), do: %{}
-  defp decode_detail(detail) when is_map(detail), do: detail
-
-  defp decode_detail(detail) when is_binary(detail) do
-    case Jason.decode(detail) do
-      {:ok, map} -> map
-      _ -> %{}
-    end
-  end
-
   defp broadcast_exchange(socket) do
     if socket.assigns.bookmark_id do
       Phoenix.PubSub.broadcast(
         Fate.PubSub,
         "exchange:#{socket.assigns.bookmark_id}",
-        {:exchange_updated, %{building: socket.assigns.building, build_steps: socket.assigns.build_steps}}
+        {:exchange_updated,
+         %{building: socket.assigns.building, build_steps: socket.assigns.build_steps}}
       )
     end
   end
@@ -1540,7 +1857,12 @@ defmodule FateWeb.ActionsLive do
         </h3>
 
         <form phx-submit="submit_modal" class="space-y-3">
-          <.modal_fields modal={@modal} entities={@entities} state={@state} prefill_entity_id={@prefill_entity_id} />
+          <.modal_fields
+            modal={@modal}
+            entities={@entities}
+            state={@state}
+            prefill_entity_id={@prefill_entity_id}
+          />
 
           <div class="flex gap-2 pt-2">
             <button
@@ -1590,33 +1912,49 @@ defmodule FateWeb.ActionsLive do
         []
       end
 
-    entity_options = Enum.map(assigns.entities, fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+    entity_options =
+      Enum.map(assigns.entities, fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+
     all_options = scene_and_zone_options ++ entity_options
 
     prefill =
       if assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: nil
 
-    assigns = assigns
+    assigns =
+      assigns
       |> assign(:all_options, all_options)
       |> assign(:prefill, prefill)
 
     ~H"""
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">On</label>
-      <select name="target_ref" class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm">
+      <select
+        name="target_ref"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
         <%= for {value, label} <- @all_options do %>
           <option value={value} selected={value == @prefill}>{label}</option>
         <% end %>
       </select>
     </div>
-    <.text_input name="description" label="Aspect Text" placeholder="e.g. On Fire! or Flanking Position" />
-    <.select_input name="role" label="Role" options={[
-      {"situation", "Situation"}, {"boost", "Boost"}, {"additional", "Additional"},
-      {"high_concept", "High Concept"}, {"trouble", "Trouble"}
-    ]} />
+    <.text_input
+      name="description"
+      label="Aspect Text"
+      placeholder="e.g. On Fire! or Flanking Position"
+    />
+    <.select_input
+      name="role"
+      label="Role"
+      options={[
+        {"situation", "Situation"},
+        {"boost", "Boost"},
+        {"additional", "Additional"},
+        {"high_concept", "High Concept"},
+        {"trouble", "Trouble"}
+      ]}
+    />
     <label class="flex items-center gap-2 text-sm text-amber-200/70">
-      <input type="checkbox" name="hidden" value="true" class="rounded" />
-      Hidden from players
+      <input type="checkbox" name="hidden" value="true" class="rounded" /> Hidden from players
     </label>
     """
   end
@@ -1624,11 +1962,20 @@ defmodule FateWeb.ActionsLive do
   defp modal_fields(%{modal: "entity_create"} = assigns) do
     ~H"""
     <.text_input name="name" label="Name" placeholder="Character name" />
-    <.select_input name="kind" label="Kind" options={[
-      {"pc", "PC"}, {"npc", "NPC"}, {"mook_group", "Mook Group"},
-      {"organization", "Organization"}, {"vehicle", "Vehicle"},
-      {"item", "Item"}, {"hazard", "Hazard"}, {"custom", "Custom"}
-    ]} />
+    <.select_input
+      name="kind"
+      label="Kind"
+      options={[
+        {"pc", "PC"},
+        {"npc", "NPC"},
+        {"mook_group", "Mook Group"},
+        {"organization", "Organization"},
+        {"vehicle", "Vehicle"},
+        {"item", "Item"},
+        {"hazard", "Hazard"},
+        {"custom", "Custom"}
+      ]}
+    />
     <.text_input name="color" label="Color" placeholder="#dc2626" />
     <.text_input name="fate_points" label="Fate Points" placeholder="3" />
     <.text_input name="refresh" label="Refresh" placeholder="3" />
@@ -1638,11 +1985,19 @@ defmodule FateWeb.ActionsLive do
   defp modal_fields(%{modal: "scene_start"} = assigns) do
     ~H"""
     <.text_input name="name" label="Scene Name" placeholder="Dockside Warehouse" />
-    <.text_input name="scene_description" label="Description" placeholder="A brief framing of the scene" />
+    <.text_input
+      name="scene_description"
+      label="Description"
+      placeholder="A brief framing of the scene"
+    />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
-      <textarea name="gm_notes" placeholder="Private prep notes..."
-        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20" rows="3" />
+      <textarea
+        name="gm_notes"
+        placeholder="Private prep notes..."
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+        rows="3"
+      />
     </div>
     """
   end
@@ -1663,9 +2018,15 @@ defmodule FateWeb.ActionsLive do
     """
   end
 
-  defp modal_fields(%{modal: modal} = assigns) when modal in ~w(fate_point_spend fate_point_earn fate_point_refresh) do
+  defp modal_fields(%{modal: modal} = assigns)
+       when modal in ~w(fate_point_spend fate_point_earn fate_point_refresh) do
     ~H"""
-    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.entity_select
+      name="entity_id"
+      label="Entity"
+      entities={@entities}
+      selected={@prefill_entity_id}
+    />
     """
   end
 
@@ -1682,10 +2043,18 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :zones, zones)
 
     ~H"""
-    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.entity_select
+      name="entity_id"
+      label="Entity"
+      entities={@entities}
+      selected={@prefill_entity_id}
+    />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">To Zone</label>
-      <select name="zone_id" class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm">
+      <select
+        name="zone_id"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
         <%= for zone <- @zones do %>
           <option value={zone.id}>{zone.name}</option>
         <% end %>
@@ -1696,20 +2065,44 @@ defmodule FateWeb.ActionsLive do
 
   defp modal_fields(%{modal: "aspect_compel"} = assigns) do
     ~H"""
-    <.entity_select name="target_id" label="Target Entity" entities={@entities} selected={@prefill_entity_id} />
-    <.text_input name="description" label="Compel Description" placeholder="What complication does this cause?" />
+    <.entity_select
+      name="target_id"
+      label="Target Entity"
+      entities={@entities}
+      selected={@prefill_entity_id}
+    />
+    <.text_input
+      name="description"
+      label="Compel Description"
+      placeholder="What complication does this cause?"
+    />
     """
   end
 
   defp modal_fields(%{modal: "entity_edit"} = assigns) do
     ~H"""
-    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.entity_select
+      name="entity_id"
+      label="Entity"
+      entities={@entities}
+      selected={@prefill_entity_id}
+    />
     <.text_input name="name" label="Name" placeholder="New name" />
-    <.select_input name="kind" label="Kind" options={[
-      {"", "— no change —"}, {"pc", "PC"}, {"npc", "NPC"}, {"mook_group", "Mook Group"},
-      {"organization", "Organization"}, {"vehicle", "Vehicle"},
-      {"item", "Item"}, {"hazard", "Hazard"}, {"custom", "Custom"}
-    ]} />
+    <.select_input
+      name="kind"
+      label="Kind"
+      options={[
+        {"", "— no change —"},
+        {"pc", "PC"},
+        {"npc", "NPC"},
+        {"mook_group", "Mook Group"},
+        {"organization", "Organization"},
+        {"vehicle", "Vehicle"},
+        {"item", "Item"},
+        {"hazard", "Hazard"},
+        {"custom", "Custom"}
+      ]}
+    />
     <.text_input name="color" label="Color" placeholder="#dc2626" />
     <.text_input name="fate_points" label="Fate Points" placeholder="" />
     <.text_input name="refresh" label="Refresh" placeholder="" />
@@ -1722,10 +2115,18 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :skill_list, skill_list)
 
     ~H"""
-    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.entity_select
+      name="entity_id"
+      label="Entity"
+      entities={@entities}
+      selected={@prefill_entity_id}
+    />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">Skill</label>
-      <select name="skill" class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm">
+      <select
+        name="skill"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
         <%= for skill <- @skill_list do %>
           <option value={skill}>{skill}</option>
         <% end %>
@@ -1737,7 +2138,12 @@ defmodule FateWeb.ActionsLive do
 
   defp modal_fields(%{modal: "stunt_add"} = assigns) do
     ~H"""
-    <.entity_select name="entity_id" label="Entity" entities={@entities} selected={@prefill_entity_id} />
+    <.entity_select
+      name="entity_id"
+      label="Entity"
+      entities={@entities}
+      selected={@prefill_entity_id}
+    />
     <.text_input name="name" label="Stunt Name" placeholder="Master Swordswoman" />
     <.text_input name="effect" label="Effect" placeholder="+2 to Fight when dueling one-on-one" />
     """
@@ -1761,9 +2167,14 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">{@label}</label>
-      <select name={@name} class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm">
+      <select
+        name={@name}
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
         <%= for entity <- @entities do %>
-          <option value={entity.id} selected={entity.id == @selected}>{entity.name} ({entity.kind})</option>
+          <option value={entity.id} selected={entity.id == @selected}>
+            {entity.name} ({entity.kind})
+          </option>
         <% end %>
       </select>
     </div>
@@ -1790,7 +2201,10 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">{@label}</label>
-      <select name={@name} class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm">
+      <select
+        name={@name}
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
         <%= for {value, label} <- @options do %>
           <option value={value}>{label}</option>
         <% end %>
@@ -1804,10 +2218,18 @@ defmodule FateWeb.ActionsLive do
   defp step_type_label(type), do: Map.get(@event_type_labels, type, to_string(type))
 
   defp default_step_detail(type) when type in @roll_types do
-    %{"skill" => nil, "skill_rating" => 0, "fudge_dice" => [0, 0, 0, 0], "raw_total" => 0, "difficulty" => nil}
+    %{
+      "skill" => nil,
+      "skill_rating" => 0,
+      "fudge_dice" => [0, 0, 0, 0],
+      "raw_total" => 0,
+      "difficulty" => nil
+    }
   end
 
-  defp default_step_detail(:invoke), do: %{"aspect_id" => nil, "description" => nil, "free" => true}
+  defp default_step_detail(:invoke),
+    do: %{"aspect_id" => nil, "description" => nil, "free" => true}
+
   defp default_step_detail(:shifts_resolved), do: %{"shifts" => 0, "outcome" => nil}
   defp default_step_detail(:stress_apply), do: %{"track_label" => nil, "box_index" => nil}
   defp default_step_detail(:consequence_take), do: %{"severity" => "mild", "aspect_text" => nil}
@@ -1860,17 +2282,7 @@ defmodule FateWeb.ActionsLive do
   defp die_class(-1), do: "bg-red-700 text-red-100 border-red-600"
   defp die_class(_), do: "bg-gray-600 text-gray-300 border-gray-500"
 
-  defp entity_name(nil, _state), do: "?"
-  defp entity_name(_id, nil), do: "?"
-
-  defp entity_name(id, state) do
-    case Map.get(state.entities, id) do
-      nil -> "?"
-      e -> e.name
-    end
-  end
-
-  defp build_step_description(step, state) do
+  defp build_step_description(step, _state) do
     case step.type do
       type when type in @roll_types ->
         action = type |> to_string() |> String.replace("roll_", "")

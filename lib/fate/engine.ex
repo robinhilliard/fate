@@ -11,7 +11,8 @@ defmodule Fate.Engine do
   @pubsub Fate.PubSub
 
   def derive_state(bookmark_id) do
-    with {:ok, bookmark} when bookmark != nil <- Ash.get(Bookmark, bookmark_id, not_found_error?: false),
+    with {:ok, bookmark} when bookmark != nil <-
+           Ash.get(Bookmark, bookmark_id, not_found_error?: false),
          {:ok, events} <- load_event_chain(bookmark.head_event_id) do
       {:ok, Replay.derive(bookmark_id, events)}
     else
@@ -22,13 +23,16 @@ defmodule Fate.Engine do
 
   def append_event(bookmark_id, attrs) do
     with {:ok, bookmark} <- Ash.get(Bookmark, bookmark_id, not_found_error?: false),
-         bookmark when bookmark != nil <- bookmark,
-         attrs <- Map.put(attrs, :parent_id, bookmark.head_event_id),
-         {:ok, event} <- Ash.create(Event, attrs, action: :append),
-         {:ok, _bookmark} <- Ash.update(bookmark, %{head_event_id: event.id}, action: :advance_head),
-         {:ok, state} <- derive_state(bookmark_id) do
-      broadcast(bookmark_id, state)
-      {:ok, state, event}
+         bookmark when bookmark != nil <- bookmark do
+      attrs = Map.put(attrs, :parent_id, bookmark.head_event_id)
+
+      with {:ok, event} <- Ash.create(Event, attrs, action: :append),
+           {:ok, _bookmark} <-
+             Ash.update(bookmark, %{head_event_id: event.id}, action: :advance_head),
+           {:ok, state} <- derive_state(bookmark_id) do
+        broadcast(bookmark_id, state)
+        {:ok, state, event}
+      end
     end
   end
 
@@ -45,9 +49,37 @@ defmodule Fate.Engine do
     SELECT * FROM chain ORDER BY timestamp ASC
     """
 
+    run_event_query(query, event_id)
+  end
+
+  @doc """
+  Loads events from bookmark head back to (but not including) the nearest
+  bookmark_create event. Used for player-visible event log.
+  """
+  def load_player_events(bookmark_id) do
+    with {:ok, bookmark} when bookmark != nil <-
+           Ash.get(Bookmark, bookmark_id, not_found_error?: false) do
+      query = """
+      WITH RECURSIVE chain AS (
+        SELECT * FROM events WHERE id = $1
+        UNION ALL
+        SELECT e.* FROM events e
+        JOIN chain c ON e.id = c.parent_id
+        WHERE c.type != 'bookmark_create'
+      )
+      SELECT * FROM chain ORDER BY timestamp ASC
+      """
+
+      run_event_query(query, bookmark.head_event_id)
+    else
+      _ -> {:ok, []}
+    end
+  end
+
+  defp run_event_query(sql, event_id) do
     {:ok, binary_id} = Ecto.UUID.dump(event_id)
 
-    case Fate.Repo.query(query, [binary_id]) do
+    case Fate.Repo.query(sql, [binary_id]) do
       {:ok, %{rows: rows, columns: columns}} ->
         events =
           Enum.map(rows, fn row ->
@@ -61,45 +93,6 @@ defmodule Fate.Engine do
 
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  @doc """
-  Loads events from bookmark head back to (but not including) the nearest
-  bookmark_create event. Used for player-visible event log.
-  """
-  def load_player_events(bookmark_id) do
-    with {:ok, bookmark} when bookmark != nil <- Ash.get(Bookmark, bookmark_id, not_found_error?: false) do
-      query = """
-      WITH RECURSIVE chain AS (
-        SELECT * FROM events WHERE id = $1
-        UNION ALL
-        SELECT e.* FROM events e
-        JOIN chain c ON e.id = c.parent_id
-        WHERE c.type != 'bookmark_create'
-      )
-      SELECT * FROM chain ORDER BY timestamp ASC
-      """
-
-      {:ok, binary_id} = Ecto.UUID.dump(bookmark.head_event_id)
-
-      case Fate.Repo.query(query, [binary_id]) do
-        {:ok, %{rows: rows, columns: columns}} ->
-          events =
-            Enum.map(rows, fn row ->
-              columns
-              |> Enum.zip(row)
-              |> Map.new()
-              |> row_to_event()
-            end)
-
-          {:ok, events}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      _ -> {:ok, []}
     end
   end
 

@@ -4,32 +4,32 @@ defmodule Fate.Game.Participant do
     data_layer: AshPostgres.DataLayer
 
   postgres do
-    table "participants"
-    repo Fate.Repo
+    table("participants")
+    repo(Fate.Repo)
   end
 
   attributes do
-    uuid_primary_key :id
+    uuid_primary_key(:id)
 
-    attribute :name, :string, allow_nil?: false
-    attribute :color, :string, allow_nil?: false, default: "#3b82f6"
+    attribute(:name, :string, allow_nil?: false)
+    attribute(:color, :string, allow_nil?: false, default: "#3b82f6")
   end
 
   relationships do
-    has_many :bookmark_participants, Fate.Game.BookmarkParticipant
+    has_many(:bookmark_participants, Fate.Game.BookmarkParticipant)
   end
 
   actions do
-    defaults [:read]
+    defaults([:read])
 
     create :create do
-      accept [:name, :color]
+      accept([:name, :color])
     end
 
     update :update do
-      accept [:name, :color]
+      accept([:name, :color])
     end
 
-    destroy :delete
+    destroy(:delete)
   end
 end

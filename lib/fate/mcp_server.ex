@@ -10,14 +10,18 @@ defmodule Fate.McpServer do
 
   @impl true
   def init(args) do
-    bookmark_id = Keyword.get(args, :bookmark_id) || args[:bookmark_id] || find_active_bookmark()
+    bookmark_id = Keyword.get(args, :bookmark_id) || find_active_bookmark()
     {:ok, %{bookmark_id: bookmark_id}}
   end
 
   defp find_active_bookmark do
     require Ash.Query
 
-    case Ash.read(Fate.Game.Bookmark |> Ash.Query.filter(status: :active) |> Ash.Query.sort(created_at: :desc)) do
+    case Ash.read(
+           Fate.Game.Bookmark
+           |> Ash.Query.filter(status: :active)
+           |> Ash.Query.sort(created_at: :desc)
+         ) do
       {:ok, [latest | _]} -> latest.id
       _ -> nil
     end
@@ -25,14 +29,15 @@ defmodule Fate.McpServer do
 
   @impl true
   def handle_initialize(_params, state) do
-    {:ok, %{
-      name: "fate-rpg",
-      version: "0.1.0",
-      capabilities: %{
-        tools: %{},
-        resources: %{}
-      }
-    }, state}
+    {:ok,
+     %{
+       name: "fate-rpg",
+       version: "0.1.0",
+       capabilities: %{
+         tools: %{},
+         resources: %{}
+       }
+     }, state}
   end
 
   @impl true
@@ -40,7 +45,8 @@ defmodule Fate.McpServer do
     tools = [
       %{
         name: "get_game",
-        description: "Get an overview of the current game state: campaign name, system, entities, scenes",
+        description:
+          "Get an overview of the current game state: campaign name, system, entities, scenes",
         input_schema: %{type: "object", properties: %{}}
       },
       %{
@@ -49,13 +55,18 @@ defmodule Fate.McpServer do
         input_schema: %{
           type: "object",
           properties: %{
-            kind: %{type: "string", description: "Filter by kind: pc, npc, mook_group, organization, vehicle, item, hazard, custom"}
+            kind: %{
+              type: "string",
+              description:
+                "Filter by kind: pc, npc, mook_group, organization, vehicle, item, hazard, custom"
+            }
           }
         }
       },
       %{
         name: "get_entity",
-        description: "Get full details of a specific entity: aspects, skills, stunts, stress tracks, consequences",
+        description:
+          "Get full details of a specific entity: aspects, skills, stunts, stress tracks, consequences",
         input_schema: %{
           type: "object",
           properties: %{entity_id: %{type: "string", description: "The entity's ID"}},
@@ -72,38 +83,83 @@ defmodule Fate.McpServer do
         description: "Get recent events from the action log",
         input_schema: %{
           type: "object",
-          properties: %{limit: %{type: "integer", description: "Max events to return (default 20)"}}
+          properties: %{
+            limit: %{type: "integer", description: "Max events to return (default 20)"}
+          }
         }
       },
       %{
         name: "create_entity",
-        description: "Create a new entity (character, NPC, organization, vehicle, etc.) with aspects, skills, stunts, and stress tracks",
+        description:
+          "Create a new entity (character, NPC, organization, vehicle, etc.) with aspects, skills, stunts, and stress tracks",
         input_schema: %{
           type: "object",
           properties: %{
             name: %{type: "string", description: "Entity name"},
-            kind: %{type: "string", description: "Entity kind: pc, npc, mook_group, organization, vehicle, item, hazard, custom"},
+            kind: %{
+              type: "string",
+              description:
+                "Entity kind: pc, npc, mook_group, organization, vehicle, item, hazard, custom"
+            },
             color: %{type: "string", description: "Hex color for visual coding (e.g. #dc2626)"},
             fate_points: %{type: "integer", description: "Starting fate points"},
             refresh: %{type: "integer", description: "Refresh rate"},
             mook_count: %{type: "integer", description: "Number of mooks (for mook_group)"},
-            aspects: %{type: "array", description: "List of aspects", items: %{type: "object", properties: %{description: %{type: "string"}, role: %{type: "string"}, hidden: %{type: "boolean"}}, required: ["description"]}},
-            skills: %{type: "object", description: "Skill ratings e.g. {\"Fight\": 4}", additionalProperties: %{type: "integer"}},
-            stunts: %{type: "array", items: %{type: "object", properties: %{name: %{type: "string"}, effect: %{type: "string"}}, required: ["name", "effect"]}},
-            stress_tracks: %{type: "array", items: %{type: "object", properties: %{label: %{type: "string"}, boxes: %{type: "integer"}}, required: ["label"]}},
-            controller_id: %{type: "string", description: "Participant ID who controls this entity"}
+            aspects: %{
+              type: "array",
+              description: "List of aspects",
+              items: %{
+                type: "object",
+                properties: %{
+                  description: %{type: "string"},
+                  role: %{type: "string"},
+                  hidden: %{type: "boolean"}
+                },
+                required: ["description"]
+              }
+            },
+            skills: %{
+              type: "object",
+              description: "Skill ratings e.g. {\"Fight\": 4}",
+              additionalProperties: %{type: "integer"}
+            },
+            stunts: %{
+              type: "array",
+              items: %{
+                type: "object",
+                properties: %{name: %{type: "string"}, effect: %{type: "string"}},
+                required: ["name", "effect"]
+              }
+            },
+            stress_tracks: %{
+              type: "array",
+              items: %{
+                type: "object",
+                properties: %{label: %{type: "string"}, boxes: %{type: "integer"}},
+                required: ["label"]
+              }
+            },
+            controller_id: %{
+              type: "string",
+              description: "Participant ID who controls this entity"
+            }
           },
           required: ["name", "kind"]
         }
       },
       %{
         name: "update_entity",
-        description: "Modify an entity's base properties (name, kind, color, fate_points, refresh)",
+        description:
+          "Modify an entity's base properties (name, kind, color, fate_points, refresh)",
         input_schema: %{
           type: "object",
           properties: %{
-            entity_id: %{type: "string"}, name: %{type: "string"}, kind: %{type: "string"},
-            color: %{type: "string"}, fate_points: %{type: "integer"}, refresh: %{type: "integer"}
+            entity_id: %{type: "string"},
+            name: %{type: "string"},
+            kind: %{type: "string"},
+            color: %{type: "string"},
+            fate_points: %{type: "integer"},
+            refresh: %{type: "integer"}
           },
           required: ["entity_id"]
         }
@@ -115,10 +171,17 @@ defmodule Fate.McpServer do
           type: "object",
           properties: %{
             target_id: %{type: "string", description: "Entity, scene, or zone ID"},
-            target_type: %{type: "string", description: "entity, scene, or zone (default: entity)"},
+            target_type: %{
+              type: "string",
+              description: "entity, scene, or zone (default: entity)"
+            },
             description: %{type: "string", description: "The aspect text"},
-            role: %{type: "string", description: "high_concept, trouble, additional, situation, boost, consequence"},
-            hidden: %{type: "boolean"}, free_invokes: %{type: "integer"}
+            role: %{
+              type: "string",
+              description: "high_concept, trouble, additional, situation, boost, consequence"
+            },
+            hidden: %{type: "boolean"},
+            free_invokes: %{type: "integer"}
           },
           required: ["target_id", "description"]
         }
@@ -140,18 +203,26 @@ defmodule Fate.McpServer do
         description: "Add a stunt to an entity",
         input_schema: %{
           type: "object",
-          properties: %{entity_id: %{type: "string"}, name: %{type: "string"}, effect: %{type: "string"}},
+          properties: %{
+            entity_id: %{type: "string"},
+            name: %{type: "string"},
+            effect: %{type: "string"}
+          },
           required: ["entity_id", "name", "effect"]
         }
       },
       %{
         name: "create_bookmark",
-        description: "Create a named bookmark on the current head event. Use to mark milestones like 'prep complete' or 'before the fight' for later return or what-if exploration.",
+        description:
+          "Create a named bookmark on the current head event. Use to mark milestones like 'prep complete' or 'before the fight' for later return or what-if exploration.",
         input_schema: %{
           type: "object",
           properties: %{
             name: %{type: "string", description: "Bookmark name"},
-            description: %{type: "string", description: "Optional note about this point in the timeline"}
+            description: %{
+              type: "string",
+              description: "Optional note about this point in the timeline"
+            }
           },
           required: ["name"]
         }
@@ -163,7 +234,8 @@ defmodule Fate.McpServer do
       },
       %{
         name: "fork_from_bookmark",
-        description: "Create a new bookmark forked from an existing one. Use for what-if exploration.",
+        description:
+          "Create a new bookmark forked from an existing one. Use for what-if exploration.",
         input_schema: %{
           type: "object",
           properties: %{
@@ -185,11 +257,6 @@ defmodule Fate.McpServer do
         }
       },
       %{
-        name: "list_bookmarks",
-        description: "List all bookmarks with their status",
-        input_schema: %{type: "object", properties: %{}}
-      },
-      %{
         name: "delete_bookmark",
         description: "Delete (archive) a bookmark by ID or name",
         input_schema: %{
@@ -206,9 +273,20 @@ defmodule Fate.McpServer do
         input_schema: %{
           type: "object",
           properties: %{
-            name: %{type: "string"}, description: %{type: "string"},
-            zones: %{type: "array", items: %{type: "object", properties: %{name: %{type: "string"}}, required: ["name"]}},
-            aspects: %{type: "array", items: %{type: "object", properties: %{description: %{type: "string"}, role: %{type: "string"}}, required: ["description"]}}
+            name: %{type: "string"},
+            description: %{type: "string"},
+            zones: %{
+              type: "array",
+              items: %{type: "object", properties: %{name: %{type: "string"}}, required: ["name"]}
+            },
+            aspects: %{
+              type: "array",
+              items: %{
+                type: "object",
+                properties: %{description: %{type: "string"}, role: %{type: "string"}},
+                required: ["description"]
+              }
+            }
           },
           required: ["name"]
         }
@@ -216,7 +294,11 @@ defmodule Fate.McpServer do
       %{
         name: "remove_entity",
         description: "Remove an entity from the game",
-        input_schema: %{type: "object", properties: %{entity_id: %{type: "string"}}, required: ["entity_id"]}
+        input_schema: %{
+          type: "object",
+          properties: %{entity_id: %{type: "string"}},
+          required: ["entity_id"]
+        }
       },
       %{
         name: "stress_apply",
@@ -224,7 +306,8 @@ defmodule Fate.McpServer do
         input_schema: %{
           type: "object",
           properties: %{
-            entity_id: %{type: "string"}, track_label: %{type: "string", description: "e.g. physical or mental"},
+            entity_id: %{type: "string"},
+            track_label: %{type: "string", description: "e.g. physical or mental"},
             box_index: %{type: "integer", description: "1-based box number"}
           },
           required: ["entity_id", "track_label", "box_index"]
@@ -236,7 +319,8 @@ defmodule Fate.McpServer do
         input_schema: %{
           type: "object",
           properties: %{
-            entity_id: %{type: "string"}, severity: %{type: "string", description: "mild, moderate, severe, or extreme"},
+            entity_id: %{type: "string"},
+            severity: %{type: "string", description: "mild, moderate, severe, or extreme"},
             aspect_text: %{type: "string", description: "The consequence aspect text"}
           },
           required: ["entity_id", "severity", "aspect_text"]
@@ -245,7 +329,11 @@ defmodule Fate.McpServer do
       %{
         name: "concede",
         description: "An entity concedes a conflict",
-        input_schema: %{type: "object", properties: %{entity_id: %{type: "string"}}, required: ["entity_id"]}
+        input_schema: %{
+          type: "object",
+          properties: %{entity_id: %{type: "string"}},
+          required: ["entity_id"]
+        }
       },
       %{
         name: "entity_move",
@@ -253,7 +341,8 @@ defmodule Fate.McpServer do
         input_schema: %{
           type: "object",
           properties: %{
-            entity_id: %{type: "string"}, zone_id: %{type: "string", description: "Zone ID, or null to leave zone"}
+            entity_id: %{type: "string"},
+            zone_id: %{type: "string", description: "Zone ID, or null to leave zone"}
           },
           required: ["entity_id"]
         }
@@ -282,6 +371,8 @@ defmodule Fate.McpServer do
     end
   end
 
+  @valid_entity_kinds ~w(pc npc mook_group organization vehicle item hazard custom)a
+
   def handle_call_tool("list_entities", args, state) do
     with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       kind_filter = args["kind"]
@@ -291,8 +382,8 @@ defmodule Fate.McpServer do
         |> Map.values()
         |> then(fn entities ->
           if kind_filter do
-            kind_atom = String.to_existing_atom(kind_filter)
-            Enum.filter(entities, &(&1.kind == kind_atom))
+            kind_atom = safe_to_atom(kind_filter, @valid_entity_kinds)
+            if kind_atom, do: Enum.filter(entities, &(&1.kind == kind_atom)), else: entities
           else
             entities
           end
@@ -300,15 +391,23 @@ defmodule Fate.McpServer do
         |> Enum.map(&entity_detail/1)
 
       {:ok, [%{type: "text", text: Jason.encode!(entities, pretty: true)}], state}
+    else
+      _ -> {:error, %{code: -32000, message: "Failed to derive state"}, state}
     end
   end
 
   def handle_call_tool("get_entity", %{"entity_id" => entity_id}, state) do
     with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       case Map.get(derived.entities, entity_id) do
-        nil -> {:ok, [%{type: "text", text: "Entity not found: #{entity_id}"}], state}
-        entity -> {:ok, [%{type: "text", text: Jason.encode!(entity_detail(entity), pretty: true)}], state}
+        nil ->
+          {:ok, [%{type: "text", text: "Entity not found: #{entity_id}"}], state}
+
+        entity ->
+          {:ok, [%{type: "text", text: Jason.encode!(entity_detail(entity), pretty: true)}],
+           state}
       end
+    else
+      _ -> {:error, %{code: -32000, message: "Failed to derive state"}, state}
     end
   end
 
@@ -316,6 +415,8 @@ defmodule Fate.McpServer do
     with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
       scenes = Enum.map(derived.scenes, &scene_detail/1)
       {:ok, [%{type: "text", text: Jason.encode!(scenes, pretty: true)}], state}
+    else
+      _ -> {:error, %{code: -32000, message: "Failed to derive state"}, state}
     end
   end
 
@@ -337,21 +438,32 @@ defmodule Fate.McpServer do
 
     detail = %{
       "entity_id" => entity_id,
-      "name" => args["name"], "kind" => args["kind"],
+      "name" => args["name"],
+      "kind" => args["kind"],
       "color" => args["color"] || "#6b7280",
-      "fate_points" => args["fate_points"], "refresh" => args["refresh"],
-      "mook_count" => args["mook_count"], "controller_id" => args["controller_id"],
-      "aspects" => args["aspects"] || [], "skills" => args["skills"] || %{},
-      "stunts" => args["stunts"] || [], "stress_tracks" => args["stress_tracks"] || []
+      "fate_points" => args["fate_points"],
+      "refresh" => args["refresh"],
+      "mook_count" => args["mook_count"],
+      "controller_id" => args["controller_id"],
+      "aspects" => args["aspects"] || [],
+      "skills" => args["skills"] || %{},
+      "stunts" => args["stunts"] || [],
+      "stress_tracks" => args["stress_tracks"] || []
     }
 
     case Engine.append_event(state.bookmark_id, %{
-      type: :entity_create,
-      description: "Create #{args["name"]} (#{args["kind"]})",
-      detail: detail
-    }) do
+           type: :entity_create,
+           description: "Create #{args["name"]} (#{args["kind"]})",
+           detail: detail
+         }) do
       {:ok, _state, _event} ->
-        {:ok, [%{type: "text", text: "Created '#{args["name"]}' (#{args["kind"]}) with ID #{entity_id}"}], state}
+        {:ok,
+         [
+           %{
+             type: "text",
+             text: "Created '#{args["name"]}' (#{args["kind"]}) with ID #{entity_id}"
+           }
+         ], state}
 
       {:error, reason} ->
         {:error, %{code: -32000, message: "Failed: #{inspect(reason)}"}, state}
@@ -363,9 +475,11 @@ defmodule Fate.McpServer do
     detail = Map.drop(args, ["entity_id"]) |> Map.put("entity_id", entity_id)
 
     case Engine.append_event(state.bookmark_id, %{
-      type: :entity_modify, target_id: entity_id,
-      description: "Modify entity #{entity_id}", detail: detail
-    }) do
+           type: :entity_modify,
+           target_id: entity_id,
+           description: "Modify entity #{entity_id}",
+           detail: detail
+         }) do
       {:ok, _, _} -> {:ok, [%{type: "text", text: "Updated entity #{entity_id}"}], state}
       {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
     end
@@ -373,17 +487,27 @@ defmodule Fate.McpServer do
 
   def handle_call_tool("add_aspect", args, state) do
     detail = %{
-      "target_id" => args["target_id"], "target_type" => args["target_type"] || "entity",
-      "description" => args["description"], "role" => args["role"] || "additional",
-      "hidden" => args["hidden"] || false, "free_invokes" => args["free_invokes"] || 0
+      "target_id" => args["target_id"],
+      "target_type" => args["target_type"] || "entity",
+      "description" => args["description"],
+      "role" => args["role"] || "additional",
+      "hidden" => args["hidden"] || false,
+      "free_invokes" => args["free_invokes"] || 0
     }
 
     case Engine.append_event(state.bookmark_id, %{
-      type: :aspect_create, target_id: args["target_id"],
-      description: "Add aspect: #{args["description"]}", detail: detail
-    }) do
-      {:ok, _, _} -> {:ok, [%{type: "text", text: "Added aspect '#{args["description"]}' to #{args["target_id"]}"}], state}
-      {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
+           type: :aspect_create,
+           target_id: args["target_id"],
+           description: "Add aspect: #{args["description"]}",
+           detail: detail
+         }) do
+      {:ok, _, _} ->
+        {:ok,
+         [%{type: "text", text: "Added aspect '#{args["description"]}' to #{args["target_id"]}"}],
+         state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: inspect(reason)}, state}
     end
   end
 
@@ -391,7 +515,8 @@ defmodule Fate.McpServer do
     results =
       Enum.map(skills, fn {skill, rating} ->
         Engine.append_event(state.bookmark_id, %{
-          type: :skill_set, target_id: entity_id,
+          type: :skill_set,
+          target_id: entity_id,
           description: "Set #{skill} to #{rating}",
           detail: %{"entity_id" => entity_id, "skill" => skill, "rating" => rating}
         })
@@ -409,27 +534,47 @@ defmodule Fate.McpServer do
 
   def handle_call_tool("add_stunt", args, state) do
     case Engine.append_event(state.bookmark_id, %{
-      type: :stunt_add, target_id: args["entity_id"],
-      description: "Add stunt: #{args["name"]}",
-      detail: %{"entity_id" => args["entity_id"], "name" => args["name"], "effect" => args["effect"]}
-    }) do
-      {:ok, _, _} -> {:ok, [%{type: "text", text: "Added stunt '#{args["name"]}' to #{args["entity_id"]}"}], state}
-      {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
+           type: :stunt_add,
+           target_id: args["entity_id"],
+           description: "Add stunt: #{args["name"]}",
+           detail: %{
+             "entity_id" => args["entity_id"],
+             "name" => args["name"],
+             "effect" => args["effect"]
+           }
+         }) do
+      {:ok, _, _} ->
+        {:ok, [%{type: "text", text: "Added stunt '#{args["name"]}' to #{args["entity_id"]}"}],
+         state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: inspect(reason)}, state}
     end
   end
 
   def handle_call_tool("create_scene", args, state) do
     detail = %{
-      "scene_id" => Ash.UUID.generate(), "name" => args["name"],
-      "description" => args["description"], "zones" => args["zones"] || [],
-      "aspects" => Enum.map(args["aspects"] || [], fn a -> Map.put_new(a, "role", "situation") end)
+      "scene_id" => Ash.UUID.generate(),
+      "name" => args["name"],
+      "description" => args["description"],
+      "zones" => args["zones"] || [],
+      "aspects" =>
+        Enum.map(args["aspects"] || [], fn a -> Map.put_new(a, "role", "situation") end)
     }
 
     case Engine.append_event(state.bookmark_id, %{
-      type: :scene_start, description: "Start scene: #{args["name"]}", detail: detail
-    }) do
+           type: :scene_start,
+           description: "Start scene: #{args["name"]}",
+           detail: detail
+         }) do
       {:ok, _, _} ->
-        {:ok, [%{type: "text", text: "Created scene '#{args["name"]}' with #{length(detail["zones"])} zones"}], state}
+        {:ok,
+         [
+           %{
+             type: "text",
+             text: "Created scene '#{args["name"]}' with #{length(detail["zones"])} zones"
+           }
+         ], state}
 
       {:error, reason} ->
         {:error, %{code: -32000, message: inspect(reason)}, state}
@@ -439,18 +584,28 @@ defmodule Fate.McpServer do
   def handle_call_tool("create_bookmark", args, state) do
     with {:ok, parent} <- Ash.get(Fate.Game.Bookmark, state.bookmark_id, not_found_error?: false),
          parent when parent != nil <- parent,
-         {:ok, bmk_event} <- Ash.create(Fate.Game.Event, %{
-           parent_id: parent.head_event_id,
-           type: :bookmark_create,
-           description: args["name"],
-           detail: %{"name" => args["name"]}
-         }, action: :append),
-         {:ok, bookmark} <- Ash.create(Fate.Game.Bookmark, %{
-           name: args["name"],
-           description: args["description"],
-           head_event_id: bmk_event.id,
-           parent_bookmark_id: parent.id
-         }, action: :create) do
+         {:ok, bmk_event} <-
+           Ash.create(
+             Fate.Game.Event,
+             %{
+               parent_id: parent.head_event_id,
+               type: :bookmark_create,
+               description: args["name"],
+               detail: %{"name" => args["name"]}
+             },
+             action: :append
+           ),
+         {:ok, bookmark} <-
+           Ash.create(
+             Fate.Game.Bookmark,
+             %{
+               name: args["name"],
+               description: args["description"],
+               head_event_id: bmk_event.id,
+               parent_bookmark_id: parent.id
+             },
+             action: :create
+           ) do
       {:ok, [%{type: "text", text: "Created bookmark '#{args["name"]}' (#{bookmark.id})"}], state}
     else
       {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
@@ -461,18 +616,20 @@ defmodule Fate.McpServer do
   def handle_call_tool("list_bookmarks", _args, state) do
     case Ash.read(Fate.Game.Bookmark, load: [:head_event]) do
       {:ok, bookmarks} ->
-        list = Enum.map(bookmarks, fn b ->
-          %{
-            id: b.id,
-            name: b.name,
-            description: b.description,
-            head_event_id: b.head_event_id,
-            parent_bookmark_id: b.parent_bookmark_id,
-            status: b.status,
-            created_at: b.created_at,
-            current: b.id == state.bookmark_id
-          }
-        end)
+        list =
+          Enum.map(bookmarks, fn b ->
+            %{
+              id: b.id,
+              name: b.name,
+              description: b.description,
+              head_event_id: b.head_event_id,
+              parent_bookmark_id: b.parent_bookmark_id,
+              status: b.status,
+              created_at: b.created_at,
+              current: b.id == state.bookmark_id
+            }
+          end)
+
         {:ok, [%{type: "text", text: Jason.encode!(list, pretty: true)}], state}
 
       _ ->
@@ -486,18 +643,34 @@ defmodule Fate.McpServer do
 
     with {:ok, bookmarks} <- Ash.read(Fate.Game.Bookmark, filter: [name: bookmark_name]),
          %Fate.Game.Bookmark{} = parent <- List.first(bookmarks) || {:error, :not_found},
-         {:ok, bmk_event} <- Ash.create(Fate.Game.Event, %{
-           parent_id: parent.head_event_id,
-           type: :bookmark_create,
-           description: new_name,
-           detail: %{"name" => new_name}
-         }, action: :append),
-         {:ok, new_bm} <- Ash.create(Fate.Game.Bookmark, %{
-           name: new_name,
-           head_event_id: bmk_event.id,
-           parent_bookmark_id: parent.id
-         }, action: :create) do
-      {:ok, [%{type: "text", text: "Created bookmark '#{new_name}' (#{new_bm.id}) forked from '#{bookmark_name}'"}], state}
+         {:ok, bmk_event} <-
+           Ash.create(
+             Fate.Game.Event,
+             %{
+               parent_id: parent.head_event_id,
+               type: :bookmark_create,
+               description: new_name,
+               detail: %{"name" => new_name}
+             },
+             action: :append
+           ),
+         {:ok, new_bm} <-
+           Ash.create(
+             Fate.Game.Bookmark,
+             %{
+               name: new_name,
+               head_event_id: bmk_event.id,
+               parent_bookmark_id: parent.id
+             },
+             action: :create
+           ) do
+      {:ok,
+       [
+         %{
+           type: "text",
+           text: "Created bookmark '#{new_name}' (#{new_bm.id}) forked from '#{bookmark_name}'"
+         }
+       ], state}
     else
       {:error, :not_found} ->
         {:error, %{code: -32000, message: "Bookmark '#{bookmark_name}' not found"}, state}
@@ -538,45 +711,68 @@ defmodule Fate.McpServer do
 
   def handle_call_tool("remove_entity", %{"entity_id" => entity_id}, state) do
     case Engine.append_event(state.bookmark_id, %{
-      type: :entity_remove,
-      target_id: entity_id,
-      description: "Remove entity"
-    }) do
+           type: :entity_remove,
+           target_id: entity_id,
+           description: "Remove entity"
+         }) do
       {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Entity removed"}], state}
       _ -> {:error, %{code: -32000, message: "Failed to remove entity"}, state}
     end
   end
 
-  def handle_call_tool("stress_apply", %{"entity_id" => entity_id, "track_label" => track_label, "box_index" => box_index}, state) do
+  def handle_call_tool(
+        "stress_apply",
+        %{"entity_id" => entity_id, "track_label" => track_label, "box_index" => box_index},
+        state
+      ) do
     case Engine.append_event(state.bookmark_id, %{
-      type: :stress_apply,
-      target_id: entity_id,
-      description: "Stress #{track_label} box #{box_index}",
-      detail: %{"entity_id" => entity_id, "track_label" => track_label, "box_index" => box_index, "shifts_absorbed" => box_index}
-    }) do
-      {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Stress applied: #{track_label} box #{box_index}"}], state}
-      _ -> {:error, %{code: -32000, message: "Failed to apply stress"}, state}
+           type: :stress_apply,
+           target_id: entity_id,
+           description: "Stress #{track_label} box #{box_index}",
+           detail: %{
+             "entity_id" => entity_id,
+             "track_label" => track_label,
+             "box_index" => box_index,
+             "shifts_absorbed" => box_index
+           }
+         }) do
+      {:ok, _state, _event} ->
+        {:ok, [%{type: "text", text: "Stress applied: #{track_label} box #{box_index}"}], state}
+
+      _ ->
+        {:error, %{code: -32000, message: "Failed to apply stress"}, state}
     end
   end
 
-  def handle_call_tool("consequence_take", %{"entity_id" => entity_id, "severity" => severity, "aspect_text" => aspect_text}, state) do
+  def handle_call_tool(
+        "consequence_take",
+        %{"entity_id" => entity_id, "severity" => severity, "aspect_text" => aspect_text},
+        state
+      ) do
     case Engine.append_event(state.bookmark_id, %{
-      type: :consequence_take,
-      target_id: entity_id,
-      description: "#{severity}: #{aspect_text}",
-      detail: %{"entity_id" => entity_id, "severity" => severity, "aspect_text" => aspect_text}
-    }) do
-      {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Consequence taken: #{severity} — #{aspect_text}"}], state}
-      _ -> {:error, %{code: -32000, message: "Failed to take consequence"}, state}
+           type: :consequence_take,
+           target_id: entity_id,
+           description: "#{severity}: #{aspect_text}",
+           detail: %{
+             "entity_id" => entity_id,
+             "severity" => severity,
+             "aspect_text" => aspect_text
+           }
+         }) do
+      {:ok, _state, _event} ->
+        {:ok, [%{type: "text", text: "Consequence taken: #{severity} — #{aspect_text}"}], state}
+
+      _ ->
+        {:error, %{code: -32000, message: "Failed to take consequence"}, state}
     end
   end
 
   def handle_call_tool("concede", %{"entity_id" => entity_id}, state) do
     case Engine.append_event(state.bookmark_id, %{
-      type: :concede,
-      actor_id: entity_id,
-      description: "Concede"
-    }) do
+           type: :concede,
+           actor_id: entity_id,
+           description: "Concede"
+         }) do
       {:ok, _state, _event} -> {:ok, [%{type: "text", text: "Entity conceded"}], state}
       _ -> {:error, %{code: -32000, message: "Failed to concede"}, state}
     end
@@ -586,13 +782,16 @@ defmodule Fate.McpServer do
     zone_id = args["zone_id"]
 
     case Engine.append_event(state.bookmark_id, %{
-      type: :entity_move,
-      actor_id: entity_id,
-      description: if(zone_id, do: "Move to zone", else: "Leave zone"),
-      detail: %{"entity_id" => entity_id, "zone_id" => zone_id}
-    }) do
-      {:ok, _state, _event} -> {:ok, [%{type: "text", text: if(zone_id, do: "Moved to zone", else: "Left zone")}], state}
-      _ -> {:error, %{code: -32000, message: "Failed to move entity"}, state}
+           type: :entity_move,
+           actor_id: entity_id,
+           description: if(zone_id, do: "Move to zone", else: "Leave zone"),
+           detail: %{"entity_id" => entity_id, "zone_id" => zone_id}
+         }) do
+      {:ok, _state, _event} ->
+        {:ok, [%{type: "text", text: if(zone_id, do: "Moved to zone", else: "Left zone")}], state}
+
+      _ ->
+        {:error, %{code: -32000, message: "Failed to move entity"}, state}
     end
   end
 
@@ -620,9 +819,14 @@ defmodule Fate.McpServer do
         {:error, %{code: -32000, message: "Bookmark not found"}, state}
 
       b ->
-        Ash.update!(b, %{status: :archived}, action: :set_status)
-        new_state = if state.bookmark_id == b.id, do: %{state | bookmark_id: nil}, else: state
-        {:ok, [%{type: "text", text: "Archived bookmark '#{b.name}' (#{b.id})"}], new_state}
+        case Ash.update(b, %{status: :archived}, action: :set_status) do
+          {:ok, _} ->
+            new_state = if state.bookmark_id == b.id, do: %{state | bookmark_id: nil}, else: state
+            {:ok, [%{type: "text", text: "Archived bookmark '#{b.name}' (#{b.id})"}], new_state}
+
+          {:error, reason} ->
+            {:error, %{code: -32000, message: "Failed to archive: #{inspect(reason)}"}, state}
+        end
     end
   end
 
@@ -635,9 +839,20 @@ defmodule Fate.McpServer do
   @impl true
   def handle_list_resources(_cursor, state) do
     resources = [
-      %{uri: "fate://game/state", name: "Game State", description: "Current derived game state", mimeType: "application/json"},
-      %{uri: "fate://rules/ladder", name: "Fate Ladder", description: "The Fate ladder (+0 to +8)", mimeType: "application/json"}
+      %{
+        uri: "fate://game/state",
+        name: "Game State",
+        description: "Current derived game state",
+        mimeType: "application/json"
+      },
+      %{
+        uri: "fate://rules/ladder",
+        name: "Fate Ladder",
+        description: "The Fate ladder (+0 to +8)",
+        mimeType: "application/json"
+      }
     ]
+
     {:ok, resources, nil, state}
   end
 
@@ -646,11 +861,20 @@ defmodule Fate.McpServer do
     case Engine.derive_state(state.bookmark_id) do
       {:ok, derived} ->
         summary = %{
-          campaign_name: derived.campaign_name, system: derived.system,
+          campaign_name: derived.campaign_name,
+          system: derived.system,
           entities: derived.entities |> Map.values() |> Enum.map(&entity_summary/1),
           scenes: Enum.map(derived.scenes, &scene_summary/1)
         }
-        {:ok, [%{type: "text", text: Jason.encode!(summary, pretty: true), mimeType: "application/json"}], state}
+
+        {:ok,
+         [
+           %{
+             type: "text",
+             text: Jason.encode!(summary, pretty: true),
+             mimeType: "application/json"
+           }
+         ], state}
 
       _ ->
         {:ok, [%{type: "text", text: "{\"error\": \"Could not derive state\"}"}], state}
@@ -659,13 +883,21 @@ defmodule Fate.McpServer do
 
   def handle_read_resource("fate://rules/ladder", state) do
     ladder = [
-      %{rating: 8, name: "Legendary"}, %{rating: 7, name: "Epic"},
-      %{rating: 6, name: "Fantastic"}, %{rating: 5, name: "Superb"},
-      %{rating: 4, name: "Great"}, %{rating: 3, name: "Good"},
-      %{rating: 2, name: "Fair"}, %{rating: 1, name: "Average"},
-      %{rating: 0, name: "Mediocre"}, %{rating: -1, name: "Terrible"}
+      %{rating: 8, name: "Legendary"},
+      %{rating: 7, name: "Epic"},
+      %{rating: 6, name: "Fantastic"},
+      %{rating: 5, name: "Superb"},
+      %{rating: 4, name: "Great"},
+      %{rating: 3, name: "Good"},
+      %{rating: 2, name: "Fair"},
+      %{rating: 1, name: "Average"},
+      %{rating: 0, name: "Mediocre"},
+      %{rating: -1, name: "Terrible"}
     ]
-    {:ok, [%{type: "text", text: Jason.encode!(ladder, pretty: true), mimeType: "application/json"}], state}
+
+    {:ok,
+     [%{type: "text", text: Jason.encode!(ladder, pretty: true), mimeType: "application/json"}],
+     state}
   end
 
   def handle_read_resource(_uri, state) do
@@ -682,34 +914,85 @@ defmodule Fate.McpServer do
 
   # --- Serialization Helpers ---
 
+  defp safe_to_atom(string, valid_atoms) do
+    Enum.find(valid_atoms, fn atom -> to_string(atom) == string end)
+  end
+
   defp entity_summary(entity) do
-    %{id: entity.id, name: entity.name, kind: entity.kind, fate_points: entity.fate_points, aspect_count: length(entity.aspects)}
+    %{
+      id: entity.id,
+      name: entity.name,
+      kind: entity.kind,
+      fate_points: entity.fate_points,
+      aspect_count: length(entity.aspects)
+    }
   end
 
   defp entity_detail(entity) do
     %{
-      id: entity.id, name: entity.name, kind: entity.kind, color: entity.color,
-      fate_points: entity.fate_points, refresh: entity.refresh, mook_count: entity.mook_count,
-      aspects: Enum.map(entity.aspects, fn a -> %{id: a.id, description: a.description, role: a.role, hidden: a.hidden, free_invokes: a.free_invokes} end),
+      id: entity.id,
+      name: entity.name,
+      kind: entity.kind,
+      color: entity.color,
+      fate_points: entity.fate_points,
+      refresh: entity.refresh,
+      mook_count: entity.mook_count,
+      aspects:
+        Enum.map(entity.aspects, fn a ->
+          %{
+            id: a.id,
+            description: a.description,
+            role: a.role,
+            hidden: a.hidden,
+            free_invokes: a.free_invokes
+          }
+        end),
       skills: entity.skills,
       stunts: Enum.map(entity.stunts, fn s -> %{id: s.id, name: s.name, effect: s.effect} end),
-      stress_tracks: Enum.map(entity.stress_tracks, fn t -> %{label: t.label, boxes: t.boxes, checked: t.checked} end),
-      consequences: Enum.map(entity.consequences, fn c -> %{id: c.id, severity: c.severity, shifts: c.shifts, aspect_text: c.aspect_text} end)
+      stress_tracks:
+        Enum.map(entity.stress_tracks, fn t ->
+          %{label: t.label, boxes: t.boxes, checked: t.checked}
+        end),
+      consequences:
+        Enum.map(entity.consequences, fn c ->
+          %{id: c.id, severity: c.severity, shifts: c.shifts, aspect_text: c.aspect_text}
+        end)
     }
   end
 
   defp scene_summary(nil), do: nil
-  defp scene_summary(scene), do: %{id: scene.id, name: scene.name, status: scene.status, zone_count: length(scene.zones)}
+
+  defp scene_summary(scene),
+    do: %{id: scene.id, name: scene.name, status: scene.status, zone_count: length(scene.zones)}
 
   defp scene_detail(scene) do
     %{
-      id: scene.id, name: scene.name, description: scene.description, status: scene.status,
-      zones: Enum.map(scene.zones, fn z -> %{id: z.id, name: z.name, aspects: Enum.map(z.aspects, fn a -> %{description: a.description, role: a.role} end)} end),
-      aspects: Enum.map(scene.aspects, fn a -> %{id: a.id, description: a.description, role: a.role, hidden: a.hidden} end)
+      id: scene.id,
+      name: scene.name,
+      description: scene.description,
+      status: scene.status,
+      zones:
+        Enum.map(scene.zones, fn z ->
+          %{
+            id: z.id,
+            name: z.name,
+            aspects: Enum.map(z.aspects, fn a -> %{description: a.description, role: a.role} end)
+          }
+        end),
+      aspects:
+        Enum.map(scene.aspects, fn a ->
+          %{id: a.id, description: a.description, role: a.role, hidden: a.hidden}
+        end)
     }
   end
 
   defp event_summary(event) do
-    %{id: event.id, type: event.type, actor_id: event.actor_id, target_id: event.target_id, description: event.description}
+    %{
+      id: event.id,
+      type: event.type,
+      actor_id: event.actor_id,
+      target_id: event.target_id,
+      description: event.description
+    }
   end
 end

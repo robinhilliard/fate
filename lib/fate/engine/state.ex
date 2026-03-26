@@ -72,9 +72,7 @@ defmodule Fate.Engine.State do
       skill_list: [],
       gm_fate_points: 0,
       entities: %{},
-      scenes: [],
-      valid: true,
-      errors: []
+      scenes: []
     ]
   end
 end

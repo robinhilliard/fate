@@ -192,9 +192,11 @@ defmodule Fate.Engine.Replay do
       %{entity | aspects: Enum.map(entity.aspects, update_fn)}
     end)
     |> update_all_scenes(fn scene ->
-      zones = Enum.map(scene.zones, fn zone ->
-        %{zone | aspects: Enum.map(zone.aspects, update_fn)}
-      end)
+      zones =
+        Enum.map(scene.zones, fn zone ->
+          %{zone | aspects: Enum.map(zone.aspects, update_fn)}
+        end)
+
       %{scene | aspects: Enum.map(scene.aspects, update_fn), zones: zones}
     end)
   end
@@ -349,17 +351,11 @@ defmodule Fate.Engine.Replay do
           end
         end)
 
-      pending =
-        case entity.pending_shifts do
-          %PendingShifts{remaining_shifts: r} = ps when r > 0 ->
-            new_remaining = max(0, r - shifts_absorbed)
-            if new_remaining == 0, do: nil, else: %{ps | remaining_shifts: new_remaining}
-
-          other ->
-            other
-        end
-
-      %{entity | stress_tracks: stress_tracks, pending_shifts: pending}
+      %{
+        entity
+        | stress_tracks: stress_tracks,
+          pending_shifts: absorb_shifts(entity.pending_shifts, shifts_absorbed)
+      }
     end)
   end
 
@@ -381,17 +377,11 @@ defmodule Fate.Engine.Replay do
     }
 
     update_entity(state, entity_id, fn entity ->
-      pending =
-        case entity.pending_shifts do
-          %PendingShifts{remaining_shifts: r} = ps when r > 0 ->
-            new_remaining = max(0, r - shifts_absorbed)
-            if new_remaining == 0, do: nil, else: %{ps | remaining_shifts: new_remaining}
-
-          other ->
-            other
-        end
-
-      %{entity | consequences: entity.consequences ++ [consequence], pending_shifts: pending}
+      %{
+        entity
+        | consequences: entity.consequences ++ [consequence],
+          pending_shifts: absorb_shifts(entity.pending_shifts, shifts_absorbed)
+      }
     end)
   end
 
@@ -622,6 +612,13 @@ defmodule Fate.Engine.Replay do
       }
     end)
   end
+
+  defp absorb_shifts(%PendingShifts{remaining_shifts: r} = ps, absorbed) when r > 0 do
+    new_remaining = max(0, r - absorbed)
+    if new_remaining == 0, do: nil, else: %{ps | remaining_shifts: new_remaining}
+  end
+
+  defp absorb_shifts(other, _absorbed), do: other
 
   defp maybe_put(struct, _key, nil), do: struct
   defp maybe_put(struct, key, value), do: Map.put(struct, key, value)
