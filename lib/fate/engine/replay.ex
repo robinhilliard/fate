@@ -173,6 +173,7 @@ defmodule Fate.Engine.Replay do
       :mook_eliminate -> apply_mook_eliminate(event, state)
       :scene_modify -> apply_scene_modify(event, state)
       :redirect_hit -> apply_redirect_hit(event, state)
+      :note -> state
       _ -> state
     end
   end

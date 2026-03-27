@@ -588,6 +588,45 @@ defmodule Fate.McpServer do
           },
           required: ["from_entity_id", "to_entity_id"]
         }
+      },
+      %{
+        name: "add_note",
+        description:
+          "Add a freeform note to the game timeline. Use for narrative beats, character quotes, clues, acquisitions, memorable moments, or any other annotation. Optionally attach to an entity, scene, or zone.",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            text: %{type: "string", description: "The note text (required)"},
+            target_id: %{
+              type: "string",
+              description: "Optional ID of an entity, scene, or zone to attach the note to"
+            },
+            target_type: %{
+              type: "string",
+              description: "Type of target: entity, scene, or zone. Required if target_id is set."
+            }
+          },
+          required: ["text"]
+        }
+      },
+      %{
+        name: "search_notes",
+        description:
+          "Search notes in the game timeline. Returns matching notes with their text, target, and timestamp. Use to find clues, character quotes, narrative moments, inventory changes, etc.",
+        input_schema: %{
+          type: "object",
+          properties: %{
+            query: %{
+              type: "string",
+              description:
+                "Optional text to search for (case-insensitive substring match against note text)"
+            },
+            target_id: %{
+              type: "string",
+              description: "Optional: filter to notes attached to this entity/scene/zone ID"
+            }
+          }
+        }
       }
     ]
 
@@ -1391,6 +1430,71 @@ defmodule Fate.McpServer do
           {:error, reason} ->
             {:error, %{code: -32000, message: "Failed to archive: #{inspect(reason)}"}, state}
         end
+    end
+  end
+
+  def handle_call_tool("add_note", %{"text" => text} = args, state) do
+    detail =
+      %{"text" => text}
+      |> then(fn d ->
+        if args["target_id"],
+          do:
+            Map.merge(d, %{
+              "target_id" => args["target_id"],
+              "target_type" => args["target_type"] || "entity"
+            }),
+          else: d
+      end)
+
+    with {:ok, _state, _event} <-
+           Engine.append_event(state.bookmark_id, %{
+             type: :note,
+             target_id: args["target_id"],
+             description: text,
+             detail: detail
+           }) do
+      {:ok, [%{type: "text", text: "Note added: #{String.slice(text, 0..80)}"}], state}
+    end
+  end
+
+  def handle_call_tool("search_notes", args, state) do
+    with {:ok, bookmark} when bookmark != nil <-
+           Ash.get(Fate.Game.Bookmark, state.bookmark_id, not_found_error?: false),
+         {:ok, events} <- Engine.load_event_chain(bookmark.head_event_id) do
+      query = args["query"]
+      target_id = args["target_id"]
+      query_lower = query && String.downcase(query)
+
+      notes =
+        events
+        |> Enum.filter(&(&1.type == :note))
+        |> Enum.filter(fn event ->
+          text = get_in(event.detail, ["text"]) || event.description || ""
+
+          matches_query =
+            if query_lower,
+              do: String.contains?(String.downcase(text), query_lower),
+              else: true
+
+          matches_target =
+            if target_id, do: event.target_id == target_id, else: true
+
+          matches_query && matches_target
+        end)
+        |> Enum.map(fn event ->
+          %{
+            text: get_in(event.detail, ["text"]) || event.description,
+            target_id: event.target_id,
+            target_type: get_in(event.detail, ["target_type"]),
+            timestamp: event.timestamp
+          }
+        end)
+
+      result = Jason.encode!(notes, pretty: true)
+
+      {:ok, [%{type: "text", text: "Found #{length(notes)} notes:\n#{result}"}], state}
+    else
+      _ -> {:ok, [%{type: "text", text: "No notes found (bookmark not loaded)"}], state}
     end
   end
 

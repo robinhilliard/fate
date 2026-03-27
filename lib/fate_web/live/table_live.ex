@@ -453,6 +453,10 @@ defmodule FateWeb.TableLive do
     {:noreply, assign(socket, :table_modal, "zone_create")}
   end
 
+  def handle_event("open_note", _params, socket) do
+    {:noreply, assign(socket, :table_modal, "note_create")}
+  end
+
   def handle_event("ring_action", %{"action" => "add_scene_aspect"}, socket) do
     {:noreply, assign(socket, :table_modal, "scene_aspect_create")}
   end
@@ -512,9 +516,38 @@ defmodule FateWeb.TableLive do
     aspect = find_scene_aspect(socket.assigns.state, aspect_id)
 
     if aspect do
+      scene = Enum.find(socket.assigns.state.scenes, fn s ->
+        Enum.any?(s.aspects, &(&1.id == aspect_id)) ||
+          Enum.any?(s.zones, fn z -> Enum.any?(z.aspects, &(&1.id == aspect_id)) end)
+      end)
+
+      parent_name = if scene, do: scene.name, else: "scene"
+      action = if aspect.hidden, do: "Reveal", else: "Hide"
+
       Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :aspect_modify,
-        description: "#{if aspect.hidden, do: "Reveal", else: "Hide"} #{aspect.description}",
+        description: "#{action} #{parent_name}: #{aspect.description}",
+        detail: %{"aspect_id" => aspect_id, "hidden" => !aspect.hidden}
+      })
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event(
+        "toggle_entity_aspect_visibility",
+        %{"aspect-id" => aspect_id, "entity-id" => entity_id},
+        socket
+      ) do
+    entity = Map.get(socket.assigns.state.entities, entity_id)
+    aspect = entity && Enum.find(entity.aspects, &(&1.id == aspect_id))
+
+    if aspect do
+      action = if aspect.hidden, do: "Reveal", else: "Hide"
+
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+        type: :aspect_modify,
+        description: "#{action} #{entity.name}: #{aspect.description}",
         detail: %{"aspect_id" => aspect_id, "hidden" => !aspect.hidden}
       })
     end
@@ -588,6 +621,32 @@ defmodule FateWeb.TableLive do
 
           nil
 
+        "note_create" ->
+          text = String.trim(params["text"] || "")
+
+          if text != "" do
+            {target_type, target_id} =
+              case String.split(params["target_ref"] || "", ":", parts: 2) do
+                ["entity", id] -> {"entity", id}
+                ["scene", id] -> {"scene", id}
+                ["zone", id] -> {"zone", id}
+                _ -> {nil, nil}
+              end
+
+            detail =
+              %{"text" => text}
+              |> then(fn d -> if target_id, do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}), else: d end)
+
+            Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+              type: :note,
+              target_id: target_id,
+              description: text,
+              detail: detail
+            })
+          end
+
+          nil
+
         _ ->
           nil
       end
@@ -630,16 +689,25 @@ defmodule FateWeb.TableLive do
           </div>
         </div>
       <% else %>
-        <%!-- Window switcher (hidden for observers) --%>
+        <%!-- Window switcher + note button (hidden for observers) --%>
         <%= unless @is_observer do %>
-          <a
-            href={~p"/actions/#{@bookmark_id}"}
-            target="fate-actions"
-            class="absolute bottom-3 right-3 z-50 px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
-            style="font-family: 'Patrick Hand', cursive;"
-          >
-            Actions ↗
-          </a>
+          <div class="absolute bottom-3 right-3 z-50 flex gap-2">
+            <button
+              phx-click="open_note"
+              class="px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
+              style="font-family: 'Patrick Hand', cursive;"
+            >
+              Note ✏️
+            </button>
+            <a
+              href={~p"/actions/#{@bookmark_id}"}
+              target="fate-actions"
+              class="px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
+              style="font-family: 'Patrick Hand', cursive;"
+            >
+              Actions ↗
+            </a>
+          </div>
         <% end %>
 
         <%!-- === Participant labels on the border === --%>

@@ -116,7 +116,11 @@ defmodule FateWeb.TableComponents do
         ]}>
           <%!-- Aspects --%>
           <%= for aspect <- visible_aspects(@entity.aspects, @is_gm) do %>
-            <div class={"group/aspect relative flex items-start gap-1 text-xs px-2 py-1 rounded mb-1 #{aspect_style(aspect)}"}>
+            <div
+              id={"entity-aspect-#{aspect.id}"}
+              class={"group/aspect relative flex items-start gap-1 text-xs px-2 py-1 rounded mb-1 #{aspect_style(aspect)}"}
+              phx-mounted={JS.transition("entity-warp-in", time: 1000)}
+            >
               <span
                 class="flex-1 font-semibold text-gray-900"
                 style="font-family: 'Permanent Marker', cursive; font-size: 0.8rem;"
@@ -127,9 +131,6 @@ defmodule FateWeb.TableComponents do
                 <span class="text-green-700">
                   {"☐" |> String.duplicate(aspect.free_invokes)}
                 </span>
-              <% end %>
-              <%= if aspect.hidden do %>
-                <span class="opacity-50">👁</span>
               <% end %>
               <div
                 :if={!@is_observer}
@@ -158,6 +159,18 @@ defmodule FateWeb.TableComponents do
                     data-tooltip="Compel"
                   >
                     C
+                  </button>
+                  <button
+                    phx-click="toggle_entity_aspect_visibility"
+                    phx-value-aspect-id={aspect.id}
+                    phx-value-entity-id={@entity.id}
+                    class="px-1 py-0.5 bg-gray-600/80 hover:bg-gray-500 text-white rounded text-xs leading-none transition"
+                    data-tooltip={if(aspect.hidden, do: "Reveal to players", else: "Hide from players")}
+                  >
+                    <.icon
+                      name={if(aspect.hidden, do: "hero-eye", else: "hero-eye-slash")}
+                      class="w-3 h-3"
+                    />
                   </button>
                 <% end %>
                 <button
@@ -973,6 +986,95 @@ defmodule FateWeb.TableComponents do
               class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
             >
               Add
+            </button>
+            <button
+              type="button"
+              phx-click="close_table_modal"
+              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+  end
+
+  def table_modal(%{modal: "note_create"} = assigns) do
+    state = assigns[:state]
+    current_scene_id = assigns[:current_scene_id]
+
+    active_scene =
+      if state && current_scene_id,
+        do: Enum.find(state.scenes, &(&1.id == current_scene_id)),
+        else: nil
+
+    target_options =
+      if state do
+        scene_opts =
+          if active_scene,
+            do:
+              [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
+                Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end),
+            else: []
+
+        entity_opts =
+          state.entities
+          |> Map.values()
+          |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+
+        scene_opts ++ entity_opts
+      else
+        []
+      end
+
+    assigns = assign(assigns, :target_options, target_options)
+
+    ~H"""
+    <div
+      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+      phx-window-keydown="close_table_modal"
+      phx-key="escape"
+    >
+      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl">
+        <h3
+          class="text-lg font-bold text-amber-100 mb-4"
+          style="font-family: 'Permanent Marker', cursive;"
+        >
+          Make a Note
+        </h3>
+        <form phx-submit="submit_table_modal" class="space-y-3">
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">Note</label>
+            <textarea
+              name="text"
+              id="note-text-input"
+              rows="4"
+              required
+              phx-mounted={JS.focus()}
+              placeholder="What happened..."
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+            />
+          </div>
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">About (optional)</label>
+            <select
+              name="target_ref"
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+            >
+              <option value="">General note</option>
+              <%= for {value, label} <- @target_options do %>
+                <option value={value}>{label}</option>
+              <% end %>
+            </select>
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button
+              type="submit"
+              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
+            >
+              OK
             </button>
             <button
               type="button"

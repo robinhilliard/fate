@@ -40,7 +40,8 @@ defmodule FateWeb.ActionsLive do
     taken_out: "Taken Out",
     mook_eliminate: "Eliminate Mook",
     zone_modify: "Modify Zone",
-    scene_modify: "Edit Scene"
+    scene_modify: "Edit Scene",
+    note: "Note"
   }
 
   @roll_types ~w(roll_attack roll_defend roll_overcome roll_create_advantage)a
@@ -410,6 +411,32 @@ defmodule FateWeb.ActionsLive do
     end
   end
 
+  def handle_event("edit_note", %{"id" => event_id}, socket) do
+    event =
+      Enum.find(socket.assigns.events, &(&1.id == event_id))
+
+    if event && event.type == :note do
+      detail = event.detail || %{}
+
+      target_ref =
+        case {detail["target_type"], event.target_id} do
+          {type, id} when type != nil and id != nil -> "#{type}:#{id}"
+          _ -> ""
+        end
+
+      {:noreply,
+       socket
+       |> assign(:modal, "edit_note")
+       |> assign(:form_data, %{
+         "event_id" => event_id,
+         "text" => detail["text"] || event.description || "",
+         "target_ref" => target_ref
+       })}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("close_modal", _params, socket) do
     {:noreply, socket |> assign(:modal, nil) |> assign(:form_data, %{})}
   end
@@ -652,6 +679,84 @@ defmodule FateWeb.ActionsLive do
               {:error, "Bookmark not found"}
           end
 
+        "note" ->
+          text = String.trim(params["text"] || "")
+
+          if text != "" do
+            {target_type, target_id} =
+              case String.split(params["target_ref"] || "", ":", parts: 2) do
+                ["entity", id] -> {"entity", id}
+                ["scene", id] -> {"scene", id}
+                ["zone", id] -> {"zone", id}
+                _ -> {nil, nil}
+              end
+
+            detail =
+              %{"text" => text}
+              |> then(fn d ->
+                if target_id,
+                  do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}),
+                  else: d
+              end)
+
+            Engine.append_event(socket.assigns.bookmark_id, %{
+              type: :note,
+              target_id: target_id,
+              description: text,
+              detail: detail
+            })
+          else
+            {:error, "Note text is required"}
+          end
+
+        "edit_note" ->
+          text = String.trim(params["text"] || "")
+          event_id = params["event_id"]
+
+          if text != "" && event_id do
+            {target_type, target_id} =
+              case String.split(params["target_ref"] || "", ":", parts: 2) do
+                ["entity", id] -> {"entity", id}
+                ["scene", id] -> {"scene", id}
+                ["zone", id] -> {"zone", id}
+                _ -> {nil, nil}
+              end
+
+            detail =
+              %{"text" => text}
+              |> then(fn d ->
+                if target_id,
+                  do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}),
+                  else: d
+              end)
+
+            case Ash.get(Fate.Game.Event, event_id, not_found_error?: false) do
+              {:ok, event} when event != nil ->
+                Ash.update!(event, %{description: text, detail: detail, target_id: target_id},
+                  action: :edit
+                )
+
+                case Engine.derive_state(socket.assigns.bookmark_id) do
+                  {:ok, state} ->
+                    Phoenix.PubSub.broadcast(
+                      Fate.PubSub,
+                      "bookmark:#{socket.assigns.bookmark_id}",
+                      {:state_updated, state}
+                    )
+
+                    {:ok, state, event}
+
+                  _ ->
+                    {:ok, nil, nil}
+                end
+
+              _ ->
+                {:error, "Event not found"}
+            end
+          else
+            {:error, "Note text is required"}
+          end
+
         _ ->
           {:error, "Unknown modal type"}
       end
@@ -755,7 +860,7 @@ defmodule FateWeb.ActionsLive do
 
       <%!-- Modal overlay (not for observers) --%>
       <%= unless @is_observer do %>
-        <.action_modal modal={@modal} state={@state} prefill_entity_id={@prefill_entity_id} />
+        <.action_modal modal={@modal} state={@state} prefill_entity_id={@prefill_entity_id} form_data={@form_data} />
       <% end %>
       <%!-- Left panel: Event Log / Bookmarks tabs --%>
       <div class="w-1/2 border-r border-amber-900/30 flex flex-col">
@@ -950,6 +1055,15 @@ defmodule FateWeb.ActionsLive do
       <span class="flex-1 text-amber-100/80 truncate" style="font-family: 'Patrick Hand', cursive;">
         {@summary}
       </span>
+      <%= if @event.type == :note && !@immutable && !@is_observer do %>
+        <button
+          phx-click="edit_note"
+          phx-value-id={@event.id}
+          class="opacity-0 group-hover:opacity-100 text-amber-400/50 hover:text-amber-300 text-xs transition shrink-0"
+        >
+          <.icon name="hero-pencil-square" class="w-3.5 h-3.5" />
+        </button>
+      <% end %>
       <%= if !@immutable && !@is_observer do %>
         <button
           phx-click="delete_event"
@@ -1001,7 +1115,7 @@ defmodule FateWeb.ActionsLive do
         end
 
       :aspect_modify ->
-        event.description || "Edit aspect"
+        event.description || "Modify aspect"
 
       :aspect_compel ->
         "Compel #{target}"
@@ -1100,6 +1214,12 @@ defmodule FateWeb.ActionsLive do
 
       :mook_eliminate ->
         "#{target} mook eliminated"
+
+      :note ->
+        text = detail["text"] || event.description || ""
+        resolved = target || target_name(state, event.target_id, detail["target_type"])
+        truncated = if String.length(text) > 60, do: String.slice(text, 0..57) <> "...", else: text
+        if resolved, do: "📝 #{truncated} (#{resolved})", else: "📝 #{truncated}"
 
       _ ->
         event.description || to_string(event.type)
@@ -2065,7 +2185,8 @@ defmodule FateWeb.ActionsLive do
       {"stunt_add", "Add Stunt"},
       {"stunt_remove", "Remove Stunt"},
       {"set_system", "Set System"},
-      {"scene_modify", "Edit Scene"}
+      {"scene_modify", "Edit Scene"},
+      {"note", "Add Note"}
     ]
   end
 
@@ -2121,6 +2242,7 @@ defmodule FateWeb.ActionsLive do
             entities={@entities}
             state={@state}
             prefill_entity_id={@prefill_entity_id}
+            form_data={@form_data}
           />
 
           <div class="flex gap-2 pt-2">
@@ -2160,6 +2282,8 @@ defmodule FateWeb.ActionsLive do
   defp modal_title("set_system"), do: "Set System"
   defp modal_title("scene_modify"), do: "Edit Scene"
   defp modal_title("fork_bookmark"), do: "Create Bookmark"
+  defp modal_title("note"), do: "Make a Note"
+  defp modal_title("edit_note"), do: "Edit Note"
   defp modal_title(other), do: other
 
   defp modal_fields(%{modal: "aspect_create"} = assigns) do
@@ -2538,9 +2662,102 @@ defmodule FateWeb.ActionsLive do
     """
   end
 
+  defp modal_fields(%{modal: "note"} = assigns) do
+    active_scene = assigns.state && Enum.find(assigns.state.scenes, &(&1.status == :active))
+    zones = if active_scene, do: active_scene.zones, else: []
+
+    scene_opts =
+      if active_scene do
+        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
+          Enum.map(zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
+      else
+        []
+      end
+
+    entity_opts =
+      if assigns.state do
+        assigns.state.entities
+        |> Map.values()
+        |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+      else
+        []
+      end
+
+    all_options = scene_opts ++ entity_opts
+    assigns = assign(assigns, :all_options, all_options)
+
+    ~H"""
+    <.note_form_fields all_options={@all_options} text="" target_ref="" />
+    """
+  end
+
+  defp modal_fields(%{modal: "edit_note"} = assigns) do
+    active_scene = assigns.state && Enum.find(assigns.state.scenes, &(&1.status == :active))
+    zones = if active_scene, do: active_scene.zones, else: []
+
+    scene_opts =
+      if active_scene do
+        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
+          Enum.map(zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
+      else
+        []
+      end
+
+    entity_opts =
+      if assigns.state do
+        assigns.state.entities
+        |> Map.values()
+        |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+      else
+        []
+      end
+
+    all_options = scene_opts ++ entity_opts
+    form_data = assigns[:form_data] || %{}
+
+    assigns =
+      assigns
+      |> assign(:all_options, all_options)
+      |> assign(:note_text, form_data["text"] || "")
+      |> assign(:note_target_ref, form_data["target_ref"] || "")
+      |> assign(:note_event_id, form_data["event_id"])
+
+    ~H"""
+    <input type="hidden" name="event_id" value={@note_event_id} />
+    <.note_form_fields all_options={@all_options} text={@note_text} target_ref={@note_target_ref} />
+    """
+  end
+
   defp modal_fields(assigns) do
     ~H"""
     <p class="text-sm text-amber-200/50">No fields configured for this action type.</p>
+    """
+  end
+
+  defp note_form_fields(assigns) do
+    ~H"""
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Note</label>
+      <textarea
+        name="text"
+        rows="4"
+        required
+        placeholder="What happened..."
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+      >{@text}</textarea>
+    </div>
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">About (optional)</label>
+      <select
+        name="target_ref"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
+        <option value="">General note</option>
+        <%= for {value, label} <- @all_options do %>
+          <option value={value} selected={value == @target_ref}>{label}</option>
+        <% end %>
+      </select>
+    </div>
     """
   end
 

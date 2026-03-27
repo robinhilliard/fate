@@ -511,11 +511,9 @@ export const SpringLayout = {
         }
       }
 
-      // Bounding-box repulsion (zones only repel other zones)
+      // Bounding-box repulsion (all elements repel each other)
       for (const other of nodeList) {
         if (other.id === node.id || other === this.dragging?.node) continue
-        if (node.zoneOnly && !other.zoneOnly) continue
-        if (!node.zoneOnly && other.zoneOnly) continue
 
         const pen = this.rectSeparation(node, other)
         if (!pen) continue
