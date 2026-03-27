@@ -232,7 +232,16 @@ defmodule FateWeb.TableLive do
         do: MapSet.delete(expanded, entity_id),
         else: MapSet.put(expanded, entity_id)
 
-    {:noreply, assign(socket, :expanded_entities, expanded)}
+    socket =
+      socket
+      |> assign(:expanded_entities, expanded)
+      |> push_event("expanded_entities_changed", %{expanded: MapSet.to_list(expanded)})
+
+    {:noreply, socket}
+  end
+
+  def handle_event("restore_expanded_entities", %{"expanded" => ids}, socket) when is_list(ids) do
+    {:noreply, assign(socket, :expanded_entities, MapSet.new(ids))}
   end
 
   def handle_event(

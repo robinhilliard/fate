@@ -218,6 +218,146 @@ const EventReorder = {
   }
 }
 
+const StepReorder = {
+  mounted() {
+    this._draggingType = null
+    this._draggingIndex = null
+    this._dropTarget = null
+    this._droppedInLane = false
+
+    const lane = () => this.el.querySelector("#build-lane")
+
+    this.el.addEventListener("dragstart", (e) => {
+      const paletteBtn = e.target.closest("[data-step-type]")
+      const stepRow = e.target.closest("[data-step-index]")
+
+      if (paletteBtn && paletteBtn.getAttribute("draggable") === "true") {
+        e.dataTransfer.effectAllowed = "copy"
+        e.dataTransfer.setData("application/x-step-type", paletteBtn.dataset.stepType)
+        this._draggingType = "palette"
+        this._droppedInLane = false
+      } else if (stepRow && stepRow.getAttribute("draggable") === "true") {
+        e.dataTransfer.effectAllowed = "move"
+        e.dataTransfer.setData("application/x-step-index", stepRow.dataset.stepIndex)
+        stepRow.style.opacity = "0.3"
+        this._draggingType = "reorder"
+        this._draggingIndex = stepRow.dataset.stepIndex
+        this._droppedInLane = false
+      }
+    })
+
+    this.el.addEventListener("dragend", (e) => {
+      const laneEl = lane()
+      if (laneEl) laneEl.querySelectorAll("[data-step-index]").forEach(r => r.style.opacity = "")
+      this._clearIndicator()
+
+      if (this._draggingType === "reorder" && !this._droppedInLane && this._draggingIndex != null) {
+        this.pushEvent("remove_step", { index: this._draggingIndex })
+      }
+
+      this._draggingType = null
+      this._draggingIndex = null
+      this._dropTarget = null
+    })
+
+    this.el.addEventListener("dragover", (e) => {
+      const laneEl = lane()
+      if (!laneEl) return
+
+      const inLane = laneEl.contains(e.target)
+      if (!inLane) {
+        this._clearIndicator()
+        return
+      }
+
+      const hasPaletteType = e.dataTransfer.types.includes("application/x-step-type")
+      const hasStepIndex = e.dataTransfer.types.includes("application/x-step-index")
+      if (!hasPaletteType && !hasStepIndex) return
+
+      e.preventDefault()
+      e.dataTransfer.dropEffect = hasPaletteType ? "copy" : "move"
+
+      const stepRow = e.target.closest("[data-step-index]")
+      if (stepRow && stepRow.dataset.stepIndex === this._draggingIndex) {
+        this._clearIndicator()
+        return
+      }
+
+      if (stepRow) {
+        const rect = stepRow.getBoundingClientRect()
+        const midY = rect.top + rect.height / 2
+        const position = e.clientY < midY ? "before" : "after"
+        this._showIndicator(stepRow, position)
+        this._dropTarget = { index: parseInt(stepRow.dataset.stepIndex), position }
+      } else {
+        const rows = laneEl.querySelectorAll("[data-step-index]")
+        if (rows.length === 0) {
+          this._dropTarget = { index: 0, position: "at" }
+        } else {
+          const lastRow = rows[rows.length - 1]
+          this._showIndicator(lastRow, "after")
+          this._dropTarget = { index: parseInt(lastRow.dataset.stepIndex) + 1, position: "at" }
+        }
+      }
+    })
+
+    this.el.addEventListener("drop", (e) => {
+      const laneEl = lane()
+      if (!laneEl || !laneEl.contains(e.target)) return
+
+      e.preventDefault()
+      this._droppedInLane = true
+
+      const paletteType = e.dataTransfer.getData("application/x-step-type")
+      const stepIndex = e.dataTransfer.getData("application/x-step-index")
+
+      let targetPosition = this._dropTarget ? this._computeInsertIndex() : null
+
+      if (paletteType) {
+        const payload = { step_type: paletteType }
+        if (targetPosition != null) payload.position = String(targetPosition)
+        this.pushEvent("add_step", payload)
+      } else if (stepIndex !== "") {
+        const from = parseInt(stepIndex)
+        let to = targetPosition != null ? targetPosition : from
+        if (from < to) to = Math.max(0, to - 1)
+        if (from !== to) {
+          this.pushEvent("reorder_step", { from: String(from), to: String(to) })
+        }
+      }
+
+      this._clearIndicator()
+      this._dropTarget = null
+    })
+  },
+
+  _computeInsertIndex() {
+    if (!this._dropTarget) return null
+    if (this._dropTarget.position === "at") return this._dropTarget.index
+    if (this._dropTarget.position === "before") return this._dropTarget.index
+    return this._dropTarget.index + 1
+  },
+
+  _showIndicator(row, position) {
+    let indicator = this.el.querySelector(".step-drop-indicator")
+    if (!indicator) {
+      indicator = document.createElement("div")
+      indicator.className = "step-drop-indicator"
+      indicator.style.cssText = "height:3px;background:#f59e0b;border-radius:2px;margin:1px 0;pointer-events:none;"
+    }
+    if (position === "before") {
+      row.parentNode.insertBefore(indicator, row)
+    } else {
+      row.parentNode.insertBefore(indicator, row.nextSibling)
+    }
+  },
+
+  _clearIndicator() {
+    const ind = this.el.querySelector(".step-drop-indicator")
+    if (ind) ind.remove()
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -227,7 +367,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     participant_name: localStorage.getItem("fate_name"),
     participant_role: localStorage.getItem("fate_role"),
   }),
-  hooks: {...colocatedHooks, SpringLayout, DraggableEntity, DropTarget, DraggableToken, ZoneDropTarget, EventReorder},
+  hooks: {...colocatedHooks, SpringLayout, DraggableEntity, DropTarget, DraggableToken, ZoneDropTarget, EventReorder, StepReorder},
 })
 
 // Show progress bar on live navigation and form submits

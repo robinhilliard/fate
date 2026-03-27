@@ -27,6 +27,22 @@ export const SpringLayout = {
     this.restorePositions()
     this.startLoop()
 
+    this.handleEvent("expanded_entities_changed", ({expanded}) => {
+      try {
+        localStorage.setItem(this.expandedStorageKey(), JSON.stringify(expanded))
+      } catch (_) {}
+    })
+
+    try {
+      const raw = localStorage.getItem(this.expandedStorageKey())
+      if (raw) {
+        const expanded = JSON.parse(raw)
+        if (Array.isArray(expanded) && expanded.length > 0) {
+          this.pushEvent("restore_expanded_entities", { expanded })
+        }
+      }
+    } catch (_) {}
+
     this.el.addEventListener("dragover", (e) => {
       if (e.dataTransfer.types.includes("entity-id")) {
         e.preventDefault()
@@ -676,6 +692,10 @@ export const SpringLayout = {
   // --- Persist positions to localStorage ---
   // Player positions (border + controlled entities) persist across scenes.
   // Scene elements (uncontrolled entities, aspects, scene title) are per-scene.
+
+  expandedStorageKey() {
+    return `fate-expanded:${this.branchKey}`
+  },
 
   tableStorageKey() {
     return `fate-layout:${this.branchKey}:table`

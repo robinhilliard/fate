@@ -159,7 +159,7 @@ defmodule FateWeb.ActionsLive do
     {:noreply, socket}
   end
 
-  def handle_event("add_step", %{"step_type" => step_type} = _params, socket) do
+  def handle_event("add_step", %{"step_type" => step_type} = params, socket) do
     type = String.to_existing_atom(step_type)
     prefill_actor = socket.assigns.prefill_entity_id
 
@@ -171,11 +171,21 @@ defmodule FateWeb.ActionsLive do
       description: ""
     }
 
-    new_index = length(socket.assigns.build_steps)
+    {steps, new_index} =
+      case params["position"] do
+        pos when is_binary(pos) ->
+          {idx, _} = Integer.parse(pos)
+          idx = min(idx, length(socket.assigns.build_steps))
+          {List.insert_at(socket.assigns.build_steps, idx, step), idx}
+
+        _ ->
+          idx = length(socket.assigns.build_steps)
+          {socket.assigns.build_steps ++ [step], idx}
+      end
 
     socket =
       socket
-      |> assign(:build_steps, socket.assigns.build_steps ++ [step])
+      |> assign(:build_steps, steps)
       |> assign(:editing_step, new_index)
 
     broadcast_exchange(socket)
@@ -209,6 +219,36 @@ defmodule FateWeb.ActionsLive do
     {:noreply, socket}
   end
 
+  def handle_event("reorder_step", %{"from" => from_str, "to" => to_str}, socket) do
+    {from, _} = Integer.parse(from_str)
+    {to, _} = Integer.parse(to_str)
+    steps = socket.assigns.build_steps
+
+    if from == to or from < 0 or from >= length(steps) do
+      {:noreply, socket}
+    else
+      step = Enum.at(steps, from)
+      steps = List.delete_at(steps, from)
+      to = min(to, length(steps))
+      steps = List.insert_at(steps, to, step)
+
+      editing = socket.assigns.editing_step
+
+      editing =
+        cond do
+          editing == nil -> nil
+          editing == from -> to
+          from < editing and editing <= to -> editing - 1
+          to <= editing and editing < from -> editing + 1
+          true -> editing
+        end
+
+      socket = socket |> assign(:build_steps, steps) |> assign(:editing_step, editing)
+      broadcast_exchange(socket)
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("update_step_field", %{"index" => index_str} = params, socket) do
     {index, _} = Integer.parse(index_str)
     steps = socket.assigns.build_steps
@@ -230,6 +270,7 @@ defmodule FateWeb.ActionsLive do
           Enum.reduce(detail_fields, step, fn field, acc ->
             case params[field] do
               nil -> acc
+              "" -> acc
               val -> put_in(acc.detail[field], parse_step_value(field, val))
             end
           end)
@@ -834,20 +875,21 @@ defmodule FateWeb.ActionsLive do
           </div>
 
           <div class="flex-1 overflow-y-auto p-4">
-            <%= if @is_observer do %>
-              <div class="text-amber-200/30 text-center py-8">
-                Observing — actions are disabled
-              </div>
+            <%= if @building do %>
+              <%!-- Exchange builder (visible to all, read-only for observers) --%>
+              <.exchange_builder
+                building={@building}
+                build_steps={@build_steps}
+                editing_step={@editing_step}
+                state={@state}
+                selection={@selection}
+                is_observer={@is_observer}
+              />
             <% else %>
-              <%= if @building do %>
-                <%!-- Exchange builder --%>
-                <.exchange_builder
-                  building={@building}
-                  build_steps={@build_steps}
-                  editing_step={@editing_step}
-                  state={@state}
-                  selection={@selection}
-                />
+              <%= if @is_observer do %>
+                <div class="text-amber-200/30 text-center py-8">
+                  Observing — actions are disabled
+                </div>
               <% else %>
                 <%!-- Quick actions + exchange starters --%>
                 <.action_menu state={@state} />
@@ -1113,57 +1155,80 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp exchange_builder(assigns) do
+    assigns = assign_new(assigns, :is_observer, fn -> false end)
+    interactive = !assigns.is_observer
+
+    assigns = assign(assigns, :interactive, interactive)
+
     ~H"""
-    <div>
+    <div id="exchange-builder" phx-hook={if(@interactive, do: "StepReorder")}>
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-lg font-bold" style="font-family: 'Patrick Hand', cursive;">
           Building: {exchange_label(@building)}
         </h3>
-        <button phx-click="cancel_build" class="text-sm text-red-400 hover:text-red-300">
-          Cancel
-        </button>
+        <%= if @interactive do %>
+          <button phx-click="cancel_build" class="text-sm text-red-400 hover:text-red-300">
+            Cancel
+          </button>
+        <% end %>
       </div>
 
       <%!-- Available step tiles --%>
-      <div class="mb-4">
-        <div class="text-xs uppercase text-amber-200/40 mb-2 font-bold">Add Step</div>
-        <div class="flex flex-wrap gap-2">
-          <%= for step_type <- available_steps(@building) do %>
-            <button
-              phx-click="add_step"
-              phx-value-step_type={step_type}
-              class="px-3 py-2 bg-amber-900/40 border border-amber-700/30 rounded-lg
-                hover:bg-amber-800/40 hover:border-amber-600/40 transition text-sm"
-              style="font-family: 'Patrick Hand', cursive;"
-            >
-              {step_type_label(step_type)}
-            </button>
-          <% end %>
+      <%= if @interactive do %>
+        <div class="mb-4">
+          <div class="text-xs uppercase text-amber-200/40 mb-2 font-bold">Add Step</div>
+          <div class="flex flex-wrap gap-2">
+            <%= for step_type <- available_steps(@building) do %>
+              <button
+                phx-click="add_step"
+                phx-value-step_type={step_type}
+                draggable="true"
+                data-step-type={step_type}
+                class="px-3 py-2 bg-amber-900/40 border border-amber-700/30 rounded-lg
+                  hover:bg-amber-800/40 hover:border-amber-600/40 transition text-sm cursor-grab"
+                style="font-family: 'Patrick Hand', cursive;"
+              >
+                {step_type_label(step_type)}
+              </button>
+            <% end %>
+          </div>
         </div>
-      </div>
+      <% end %>
 
       <%!-- Build lane --%>
       <div class="mb-4">
         <div class="text-xs uppercase text-amber-200/40 mb-2 font-bold">Build Lane</div>
-        <%= if @build_steps == [] do %>
-          <div class="text-amber-200/20 text-sm py-4 text-center border border-dashed border-amber-700/20 rounded-lg">
-            Click a step above to begin
-          </div>
-        <% else %>
-          <div class="space-y-2">
-            <%= for {step, index} <- Enum.with_index(@build_steps) do %>
-              <%= if @editing_step == index do %>
-                <.step_form step={step} index={index} state={@state} />
+        <div
+          id="build-lane"
+          class={[
+            "min-h-[3rem] rounded-lg",
+            @build_steps == [] && "border border-dashed border-amber-700/20"
+          ]}
+        >
+          <%= if @build_steps == [] do %>
+            <div class="text-amber-200/20 text-sm py-4 text-center">
+              <%= if @interactive do %>
+                Click or drag a step above to begin
               <% else %>
-                <.step_summary step={step} index={index} state={@state} />
+                Waiting for steps...
               <% end %>
-            <% end %>
-          </div>
-        <% end %>
+            </div>
+          <% else %>
+            <div class="space-y-2">
+              <%= for {step, index} <- Enum.with_index(@build_steps) do %>
+                <%= if @editing_step == index do %>
+                  <.step_form step={step} index={index} state={@state} />
+                <% else %>
+                  <.step_summary step={step} index={index} state={@state} is_observer={@is_observer} />
+                <% end %>
+              <% end %>
+            </div>
+          <% end %>
+        </div>
       </div>
 
       <%!-- Commit button --%>
-      <%= if @build_steps != [] && @editing_step == nil do %>
+      <%= if @interactive && @build_steps != [] && @editing_step == nil do %>
         <button
           phx-click="commit_exchange"
           class="w-full py-3 bg-green-800/60 border border-green-600/30 rounded-lg
@@ -1178,16 +1243,26 @@ defmodule FateWeb.ActionsLive do
 
   defp step_summary(assigns) do
     desc = build_step_description(assigns.step, assigns.state)
-    assigns = assign(assigns, :desc, desc)
+    interactive = !assigns[:is_observer]
+
+    assigns =
+      assigns
+      |> assign(:desc, desc)
+      |> assign(:interactive, interactive)
 
     ~H"""
     <div
-      class="flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-700/20 cursor-pointer hover:bg-amber-900/40 transition"
-      phx-click="edit_step"
+      class={[
+        "flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-700/20 hover:bg-amber-900/40 transition step-row",
+        if(@interactive, do: "cursor-grab", else: "cursor-default")
+      ]}
+      phx-click={if(@interactive, do: "edit_step")}
       phx-value-index={@index}
+      draggable={if(@interactive, do: "true", else: "false")}
+      data-step-index={@index}
     >
-      <span class="text-xs text-amber-300/50 font-bold">{@index + 1}.</span>
-      <span class="text-sm flex-1" style="font-family: 'Patrick Hand', cursive;">
+      <span class="text-xs text-amber-300/50 font-bold shrink-0">{@index + 1}.</span>
+      <span class="text-sm shrink-0" style="font-family: 'Patrick Hand', cursive;">
         {step_type_label(@step.type)}
       </span>
       <span class="text-xs text-amber-200/40 flex-1 truncate">{@desc}</span>
@@ -1204,13 +1279,15 @@ defmodule FateWeb.ActionsLive do
           </span>
         </div>
       <% end %>
-      <button
-        phx-click="remove_step"
-        phx-value-index={@index}
-        class="text-red-400/50 hover:text-red-400 text-xs shrink-0"
-      >
-        ✕
-      </button>
+      <%= if @interactive do %>
+        <button
+          phx-click="remove_step"
+          phx-value-index={@index}
+          class="text-red-400/50 hover:text-red-400 text-xs shrink-0"
+        >
+          ✕
+        </button>
+      <% end %>
     </div>
     """
   end
@@ -1229,7 +1306,7 @@ defmodule FateWeb.ActionsLive do
       |> assign(:needs_difficulty, needs_difficulty)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
+    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           {step_type_label(@step.type)}
@@ -1251,41 +1328,70 @@ defmodule FateWeb.ActionsLive do
         </div>
       </div>
 
-      <%!-- Actor --%>
-      <div>
-        <label class="block text-xs text-amber-200/50 mb-1">Actor</label>
-        <select
-          phx-change="update_step_field"
-          phx-value-index={@index}
-          name="actor_id"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-        >
-          <option value="">Select...</option>
-          <%= for e <- @entities do %>
-            <option value={e.id} selected={e.id == @step.actor_id}>{e.name} ({e.kind})</option>
-          <% end %>
-        </select>
-      </div>
+      <form phx-change="update_step_field" id={"step-form-#{@index}"} class="space-y-3">
+        <input type="hidden" name="index" value={@index} />
+        <%!-- Actor --%>
+        <div>
+          <label class="block text-xs text-amber-200/50 mb-1">Actor</label>
+          <select
+            name="actor_id"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          >
+            <option value="">Select...</option>
+            <%= for e <- @entities do %>
+              <option value={e.id} selected={e.id == @step.actor_id}>{e.name} ({e.kind})</option>
+            <% end %>
+          </select>
+        </div>
 
-      <%!-- Skill --%>
-      <div>
-        <label class="block text-xs text-amber-200/50 mb-1">Skill</label>
-        <select
-          phx-change="update_step_field"
-          phx-value-index={@index}
-          name="skill"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-        >
-          <option value="">Select...</option>
-          <%= for {skill, rating} <- @skills do %>
-            <option value={skill} selected={skill == @step.detail["skill"]}>
-              {skill} ({format_rating(rating)})
-            </option>
-          <% end %>
-        </select>
-      </div>
+        <%!-- Skill --%>
+        <div>
+          <label class="block text-xs text-amber-200/50 mb-1">Skill</label>
+          <select
+            name="skill"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          >
+            <option value="">Select...</option>
+            <%= for {skill, rating} <- @skills do %>
+              <option value={skill} selected={skill == @step.detail["skill"]}>
+                {skill} ({format_rating(rating)})
+              </option>
+            <% end %>
+          </select>
+        </div>
 
-      <%!-- Fudge Dice --%>
+        <%!-- Target (attack only) --%>
+        <%= if @needs_target do %>
+          <div>
+            <label class="block text-xs text-amber-200/50 mb-1">Target</label>
+            <select
+              name="target_id"
+              class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+            >
+              <option value="">Select...</option>
+              <%= for e <- @entities do %>
+                <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
+              <% end %>
+            </select>
+          </div>
+        <% end %>
+
+        <%!-- Difficulty (overcome only) --%>
+        <%= if @needs_difficulty do %>
+          <div>
+            <label class="block text-xs text-amber-200/50 mb-1">Difficulty</label>
+            <input
+              type="number"
+              name="difficulty"
+              value={@step.detail["difficulty"]}
+              placeholder="0"
+              class="w-20 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+            />
+          </div>
+        <% end %>
+      </form>
+
+      <%!-- Fudge Dice (outside form — uses phx-click, not phx-change) --%>
       <div>
         <label class="block text-xs text-amber-200/50 mb-1">Dice</label>
         <div class="flex items-center gap-3">
@@ -1323,40 +1429,6 @@ defmodule FateWeb.ActionsLive do
           </div>
         </div>
       </div>
-
-      <%!-- Target (attack only) --%>
-      <%= if @needs_target do %>
-        <div>
-          <label class="block text-xs text-amber-200/50 mb-1">Target</label>
-          <select
-            phx-change="update_step_field"
-            phx-value-index={@index}
-            name="target_id"
-            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-          >
-            <option value="">Select...</option>
-            <%= for e <- @entities do %>
-              <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
-            <% end %>
-          </select>
-        </div>
-      <% end %>
-
-      <%!-- Difficulty (overcome only) --%>
-      <%= if @needs_difficulty do %>
-        <div>
-          <label class="block text-xs text-amber-200/50 mb-1">Difficulty</label>
-          <input
-            type="number"
-            phx-change="update_step_field"
-            phx-value-index={@index}
-            name="difficulty"
-            value={@step.detail["difficulty"]}
-            placeholder="0"
-            class="w-20 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-          />
-        </div>
-      <% end %>
     </div>
     """
   end
@@ -1404,7 +1476,7 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :aspects, aspects)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
+    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Invoke Aspect
@@ -1425,22 +1497,23 @@ defmodule FateWeb.ActionsLive do
           </button>
         </div>
       </div>
-      <div>
-        <label class="block text-xs text-amber-200/50 mb-1">Aspect</label>
-        <select
-          phx-change="update_step_field"
-          phx-value-index={@index}
-          name="description"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-        >
-          <option value="">Select...</option>
-          <%= for a <- @aspects do %>
-            <option value={a.label} selected={a.label == @step.detail["description"]}>
-              {a.label} {if a.free_invokes > 0, do: "(#{a.free_invokes} free)", else: ""}
-            </option>
-          <% end %>
-        </select>
-      </div>
+      <form phx-change="update_step_field" id={"step-form-#{@index}"} class="space-y-3">
+        <input type="hidden" name="index" value={@index} />
+        <div>
+          <label class="block text-xs text-amber-200/50 mb-1">Aspect</label>
+          <select
+            name="description"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          >
+            <option value="">Select...</option>
+            <%= for a <- @aspects do %>
+              <option value={a.label} selected={a.label == @step.detail["description"]}>
+                {a.label} {if a.free_invokes > 0, do: "(#{a.free_invokes} free)", else: ""}
+              </option>
+            <% end %>
+          </select>
+        </div>
+      </form>
     </div>
     """
   end
@@ -1450,7 +1523,7 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :entities, entities)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
+    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Resolve Shifts
@@ -1471,13 +1544,12 @@ defmodule FateWeb.ActionsLive do
           </button>
         </div>
       </div>
-      <div class="flex gap-3">
+      <form phx-change="update_step_field" id={"step-form-#{@index}"} class="flex gap-3">
+        <input type="hidden" name="index" value={@index} />
         <div>
           <label class="block text-xs text-amber-200/50 mb-1">Shifts</label>
           <input
             type="number"
-            phx-change="update_step_field"
-            phx-value-index={@index}
             name="shifts"
             value={@step.detail["shifts"]}
             placeholder="0"
@@ -1487,8 +1559,6 @@ defmodule FateWeb.ActionsLive do
         <div class="flex-1">
           <label class="block text-xs text-amber-200/50 mb-1">Target</label>
           <select
-            phx-change="update_step_field"
-            phx-value-index={@index}
             name="target_id"
             class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
           >
@@ -1498,7 +1568,7 @@ defmodule FateWeb.ActionsLive do
             <% end %>
           </select>
         </div>
-      </div>
+      </form>
     </div>
     """
   end
@@ -1508,7 +1578,7 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :entities, entities)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
+    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Take Consequence
@@ -1529,52 +1599,49 @@ defmodule FateWeb.ActionsLive do
           </button>
         </div>
       </div>
-      <div>
-        <label class="block text-xs text-amber-200/50 mb-1">Entity</label>
-        <select
-          phx-change="update_step_field"
-          phx-value-index={@index}
-          name="target_id"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-        >
-          <option value="">Select...</option>
-          <%= for e <- @entities do %>
-            <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
-          <% end %>
-        </select>
-      </div>
-      <div class="flex gap-3">
+      <form phx-change="update_step_field" id={"step-form-#{@index}"} class="space-y-3">
+        <input type="hidden" name="index" value={@index} />
         <div>
-          <label class="block text-xs text-amber-200/50 mb-1">Severity</label>
+          <label class="block text-xs text-amber-200/50 mb-1">Entity</label>
           <select
-            phx-change="update_step_field"
-            phx-value-index={@index}
-            name="severity"
-            class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+            name="target_id"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
           >
-            <option value="mild" selected={@step.detail["severity"] == "mild"}>Mild (2)</option>
-            <option value="moderate" selected={@step.detail["severity"] == "moderate"}>
-              Moderate (4)
-            </option>
-            <option value="severe" selected={@step.detail["severity"] == "severe"}>Severe (6)</option>
-            <option value="extreme" selected={@step.detail["severity"] == "extreme"}>
-              Extreme (8)
-            </option>
+            <option value="">Select...</option>
+            <%= for e <- @entities do %>
+              <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
+            <% end %>
           </select>
         </div>
-        <div class="flex-1">
-          <label class="block text-xs text-amber-200/50 mb-1">Aspect Text</label>
-          <input
-            type="text"
-            phx-change="update_step_field"
-            phx-value-index={@index}
-            name="aspect_text"
-            value={@step.detail["aspect_text"]}
-            placeholder="Broken Arm"
-            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm placeholder-amber-200/20"
-          />
+        <div class="flex gap-3">
+          <div>
+            <label class="block text-xs text-amber-200/50 mb-1">Severity</label>
+            <select
+              name="severity"
+              class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+            >
+              <option value="mild" selected={@step.detail["severity"] == "mild"}>Mild (2)</option>
+              <option value="moderate" selected={@step.detail["severity"] == "moderate"}>
+                Moderate (4)
+              </option>
+              <option value="severe" selected={@step.detail["severity"] == "severe"}>Severe (6)</option>
+              <option value="extreme" selected={@step.detail["severity"] == "extreme"}>
+                Extreme (8)
+              </option>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs text-amber-200/50 mb-1">Aspect Text</label>
+            <input
+              type="text"
+              name="aspect_text"
+              value={@step.detail["aspect_text"]}
+              placeholder="Broken Arm"
+              class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm placeholder-amber-200/20"
+            />
+          </div>
         </div>
-      </div>
+      </form>
     </div>
     """
   end
@@ -1594,7 +1661,7 @@ defmodule FateWeb.ActionsLive do
       |> assign(:tracks, tracks)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3">
+    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Apply Stress
@@ -1615,59 +1682,56 @@ defmodule FateWeb.ActionsLive do
           </button>
         </div>
       </div>
-      <div>
-        <label class="block text-xs text-amber-200/50 mb-1">Entity</label>
-        <select
-          phx-change="update_step_field"
-          phx-value-index={@index}
-          name="target_id"
-          class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-        >
-          <option value="">Select...</option>
-          <%= for e <- @entities do %>
-            <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
-          <% end %>
-        </select>
-      </div>
-      <%= if @tracks != [] do %>
-        <div class="flex gap-3">
-          <div>
-            <label class="block text-xs text-amber-200/50 mb-1">Track</label>
-            <select
-              phx-change="update_step_field"
-              phx-value-index={@index}
-              name="track_label"
-              class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-            >
-              <%= for t <- @tracks do %>
-                <option value={t.label} selected={t.label == @step.detail["track_label"]}>
-                  {t.label}
-                </option>
-              <% end %>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-amber-200/50 mb-1">Box</label>
-            <input
-              type="number"
-              phx-change="update_step_field"
-              phx-value-index={@index}
-              name="box_index"
-              value={@step.detail["box_index"]}
-              placeholder="1"
-              min="1"
-              class="w-16 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
-            />
-          </div>
+      <form phx-change="update_step_field" id={"step-form-#{@index}"} class="space-y-3">
+        <input type="hidden" name="index" value={@index} />
+        <div>
+          <label class="block text-xs text-amber-200/50 mb-1">Entity</label>
+          <select
+            name="target_id"
+            class="w-full px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+          >
+            <option value="">Select...</option>
+            <%= for e <- @entities do %>
+              <option value={e.id} selected={e.id == @step.target_id}>{e.name}</option>
+            <% end %>
+          </select>
         </div>
-      <% end %>
+        <%= if @tracks != [] do %>
+          <div class="flex gap-3">
+            <div>
+              <label class="block text-xs text-amber-200/50 mb-1">Track</label>
+              <select
+                name="track_label"
+                class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+              >
+                <%= for t <- @tracks do %>
+                  <option value={t.label} selected={t.label == @step.detail["track_label"]}>
+                    {t.label}
+                  </option>
+                <% end %>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-amber-200/50 mb-1">Box</label>
+              <input
+                type="number"
+                name="box_index"
+                value={@step.detail["box_index"]}
+                placeholder="1"
+                min="1"
+                class="w-16 px-2 py-1.5 bg-amber-900/30 border border-amber-700/30 rounded text-amber-100 text-sm"
+              />
+            </div>
+          </div>
+        <% end %>
+      </form>
     </div>
     """
   end
 
   defp step_form(assigns) do
     ~H"""
-    <div class="flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-600/30">
+    <div class="flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-600/30" data-step-index={@index}>
       <span class="text-xs text-amber-300/50 font-bold">{@index + 1}.</span>
       <span class="text-sm flex-1" style="font-family: 'Patrick Hand', cursive;">
         {step_type_label(@step.type)}
@@ -2007,8 +2071,9 @@ defmodule FateWeb.ActionsLive do
 
   defp broadcast_exchange(socket) do
     if socket.assigns.bookmark_id do
-      Phoenix.PubSub.broadcast(
+      Phoenix.PubSub.broadcast_from(
         Fate.PubSub,
+        self(),
         "exchange:#{socket.assigns.bookmark_id}",
         {:exchange_updated,
          %{building: socket.assigns.building, build_steps: socket.assigns.build_steps}}
@@ -2600,7 +2665,7 @@ defmodule FateWeb.ActionsLive do
   defp die_class(-1), do: "bg-red-700 text-red-100 border-red-600"
   defp die_class(_), do: "bg-gray-600 text-gray-300 border-gray-500"
 
-  defp build_step_description(step, _state) do
+  defp build_step_description(step, state) do
     case step.type do
       type when type in @roll_types ->
         action = type |> to_string() |> String.replace("roll_", "")
@@ -2620,14 +2685,16 @@ defmodule FateWeb.ActionsLive do
         "#{shifts} shifts — #{outcome}"
 
       :stress_apply ->
+        target = entity_name(state, step.target_id)
         track = step.detail["track_label"] || "?"
         box = step.detail["box_index"] || "?"
-        "Stress #{track} box #{box}"
+        "#{target || "?"} #{track} box #{box}"
 
       :consequence_take ->
+        target = entity_name(state, step.target_id)
         sev = step.detail["severity"] || "mild"
         text = step.detail["aspect_text"] || "?"
-        "#{sev}: #{text}"
+        "#{target || "?"} #{sev}: #{text}"
 
       _ ->
         to_string(step.type)
