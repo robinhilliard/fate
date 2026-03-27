@@ -223,7 +223,11 @@ defmodule Fate.Engine.Replay do
     rating = detail["rating"]
 
     update_entity(state, entity_id, fn entity ->
-      %{entity | skills: Map.put(entity.skills, skill, rating)}
+      if rating == 0 do
+        %{entity | skills: Map.delete(entity.skills, skill)}
+      else
+        %{entity | skills: Map.put(entity.skills, skill, rating)}
+      end
     end)
   end
 

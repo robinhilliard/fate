@@ -64,12 +64,14 @@ defmodule Fate.Engine.State do
   end
 
   defmodule DerivedState do
+    @core_skills ~w(Athletics Burglary Contacts Crafts Deceive Drive Empathy Fight Investigate Lore Notice Physique Provoke Rapport Resources Shoot Stealth Will)
+
     defstruct [
       :bookmark_id,
       :head_event_id,
       :campaign_name,
-      :system,
-      skill_list: [],
+      system: "core",
+      skill_list: @core_skills,
       gm_fate_points: 0,
       entities: %{},
       scenes: []

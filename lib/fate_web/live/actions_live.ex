@@ -809,7 +809,7 @@ defmodule FateWeb.ActionsLive do
 
   defp event_row(assigns) do
     color = entity_color(assigns.state, assigns.event.actor_id)
-    summary = compact_event_summary(assigns.event)
+    summary = compact_event_summary(assigns.event, assigns.state)
 
     assigns =
       assigns
@@ -849,8 +849,10 @@ defmodule FateWeb.ActionsLive do
     """
   end
 
-  defp compact_event_summary(event) do
+  defp compact_event_summary(event, state) do
     detail = event.detail || %{}
+    actor = entity_name(state, event.actor_id)
+    target = entity_name(state, event.target_id)
 
     case event.type do
       :create_campaign ->
@@ -863,41 +865,49 @@ defmodule FateWeb.ActionsLive do
         "New #{detail["kind"] || "entity"}: #{detail["name"]}"
 
       :entity_modify ->
-        event.description || "Edit #{detail["name"] || "entity"}"
+        "Edit #{target || detail["name"] || "entity"}"
 
       :entity_remove ->
-        "Remove #{event.target_id}"
+        "Remove #{target}"
 
       :aspect_create ->
-        "+ #{detail["description"]}"
+        "+ #{detail["description"]}#{if target, do: " on #{target}"}"
 
       :aspect_remove ->
         desc =
           (event.description || "aspect")
           |> String.replace(~r/^(Hide|Reveal|Remove aspect): /i, "")
 
-        "- #{desc}"
+        "- #{desc}#{if target, do: " on #{target}"}"
 
       :aspect_modify ->
         event.description || "Edit aspect"
 
       :aspect_compel ->
-        "Compel: #{detail["aspect_id"]}"
+        "Compel #{target}"
 
       :skill_set ->
-        "#{detail["skill"]} → +#{detail["rating"]}"
+        rating = detail["rating"]
+
+        skill_text =
+          if rating == 0, do: "Remove #{detail["skill"]}", else: "#{detail["skill"]} → +#{rating}"
+
+        "#{skill_text} — #{target}"
 
       :stunt_add ->
-        "Stunt: #{detail["name"]}"
+        "Stunt: #{detail["name"]} — #{target}"
 
       :stunt_remove ->
-        "Remove stunt"
+        "Remove stunt — #{target}"
 
       :scene_start ->
         "Scene: #{detail["name"]}"
 
       :scene_end ->
-        "End scene"
+        event.description || "End scene"
+
+      :scene_modify ->
+        "Edit scene"
 
       :zone_create ->
         "Zone: #{detail["name"]}"
@@ -906,64 +916,74 @@ defmodule FateWeb.ActionsLive do
         "#{if detail["hidden"] == false, do: "Reveal", else: "Hide"} zone"
 
       :entity_enter_scene ->
-        "Enter scene"
+        "#{actor} enters scene"
 
       :entity_move ->
-        "Move to zone"
+        "#{actor} moves"
 
       :roll_attack ->
-        "Attack #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
+        "#{actor} attacks #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
 
       :roll_defend ->
-        "Defend #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
+        "#{actor} defends #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
 
       :roll_overcome ->
-        "Overcome #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
+        "#{actor} overcomes #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
 
       :roll_create_advantage ->
-        "Advantage #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
+        "#{actor} creates advantage #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
 
       :invoke ->
-        "Invoke: #{detail["description"] || detail["aspect_id"]}"
+        "#{actor} invokes: #{detail["description"] || "aspect"}"
 
       :shifts_resolved ->
-        "#{detail["shifts"] || 0} shifts — #{detail["outcome"]}"
+        "#{detail["shifts"] || 0} shifts#{if target, do: " on #{target}"}"
 
       :redirect_hit ->
-        "Redirect hit"
+        "Redirect hit#{if target, do: " to #{target}"}"
 
       :stress_apply ->
-        "Stress ×#{detail["box_index"]}"
+        "#{target} stress ×#{detail["box_index"]}"
 
       :stress_clear ->
-        "Clear stress"
+        "#{target} clears stress"
 
       :consequence_take ->
-        "#{detail["severity"]}: #{detail["aspect_text"]}"
+        "#{target} takes #{detail["severity"]}: #{detail["aspect_text"]}"
 
       :consequence_recover ->
-        "Recover consequence"
+        "#{target} recovers consequence"
 
       :fate_point_spend ->
-        "Spend FP"
+        "#{target} spends FP"
 
       :fate_point_earn ->
-        "Earn FP"
+        "#{target} earns FP"
 
       :fate_point_refresh ->
-        "Refresh FP"
+        "#{target} refreshes FP"
 
       :concede ->
-        "Concede"
+        "#{actor} concedes"
 
       :taken_out ->
-        "Taken out!"
+        "#{target || actor} taken out!"
 
       :mook_eliminate ->
-        "Mook eliminated"
+        "#{target} mook eliminated"
 
       _ ->
         event.description || to_string(event.type)
+    end
+  end
+
+  defp entity_name(nil, _), do: nil
+  defp entity_name(_, nil), do: nil
+
+  defp entity_name(state, id) do
+    case Map.get(state.entities, id) do
+      nil -> nil
+      entity -> entity.name
     end
   end
 

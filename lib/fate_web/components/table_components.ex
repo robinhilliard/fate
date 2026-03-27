@@ -15,6 +15,18 @@ defmodule FateWeb.TableComponents do
         if assigns.entity.controller_id, do: assigns.entity.color || "#6b7280", else: @gm_color
       end)
       |> assign_new(:is_observer, fn -> false end)
+      |> assign_new(:expanded, fn -> false end)
+      |> assign_new(:can_expand, fn -> false end)
+
+    sorted_skills =
+      if assigns.expanded do
+        assigns.entity.skills
+        |> Enum.sort_by(fn {_k, v} -> -v end)
+      else
+        []
+      end
+
+    assigns = assign(assigns, :sorted_skills, sorted_skills)
 
     ~H"""
     <div
@@ -22,10 +34,25 @@ defmodule FateWeb.TableComponents do
       phx-click={unless(@is_observer, do: "select")}
       phx-value-id={@entity.id}
       phx-value-type="entity"
-      class={"relative p-3 rounded-lg shadow-lg w-52 cursor-pointer transition-all
-        #{if @selected, do: "ring-2 ring-yellow-400 scale-105", else: "hover:scale-102"}"}
+      class={[
+        "group/card relative p-3 rounded-lg shadow-lg cursor-pointer transition-all",
+        if(@expanded, do: "w-[420px]", else: "w-52"),
+        if(@selected, do: "ring-2 ring-yellow-400 scale-105", else: "hover:scale-102")
+      ]}
       style={"background: #f5f0e8; border-left: 4px solid #{@entity.color || "#6b7280"};"}
     >
+      <%= if @can_expand do %>
+        <button
+          phx-click="toggle_expand"
+          phx-value-entity-id={@entity.id}
+          class="absolute top-1/2 -right-3 -translate-y-1/2 w-6 h-10 bg-gray-200/80 hover:bg-gray-300 rounded-r-md flex items-center justify-center transition-all opacity-0 group-hover/card:opacity-100"
+        >
+          <.icon
+            name={if(@expanded, do: "hero-chevron-left-mini", else: "hero-chevron-right-mini")}
+            class="w-4 h-4 text-gray-500"
+          />
+        </button>
+      <% end %>
       <div class="flex items-center gap-2 mb-2">
         <%= if @entity.avatar do %>
           <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-xs">
@@ -33,7 +60,10 @@ defmodule FateWeb.TableComponents do
           </div>
         <% end %>
         <div>
-          <div class="font-bold text-gray-900 text-base" style="font-family: 'Patrick Hand', cursive;">
+          <div
+            class="font-bold text-gray-900 text-base"
+            style="font-family: 'Patrick Hand', cursive;"
+          >
             {@entity.name}
           </div>
           <div class="text-xs text-gray-500 uppercase tracking-wide">
@@ -79,142 +109,269 @@ defmodule FateWeb.TableComponents do
         <% end %>
       </div>
 
-      <%!-- Aspects --%>
-      <%= for aspect <- visible_aspects(@entity.aspects, @is_gm) do %>
-        <div class={"group/aspect relative flex items-start gap-1 text-xs px-2 py-1 rounded mb-1 #{aspect_style(aspect)}"}>
-          <span
-            class="flex-1 font-semibold text-gray-900"
-            style="font-family: 'Permanent Marker', cursive; font-size: 0.8rem;"
-          >
-            {aspect.description}
-          </span>
-          <%= if aspect.free_invokes > 0 do %>
-            <span class="text-green-700">
-              {"☐" |> String.duplicate(aspect.free_invokes)}
-            </span>
-          <% end %>
-          <%= if aspect.hidden do %>
-            <span class="opacity-50">👁</span>
-          <% end %>
-          <div
-            :if={!@is_observer}
-            class="aspect-inline-menu opacity-0 group-hover/aspect:opacity-100 transition-opacity flex gap-0.5 shrink-0"
-          >
-            <button
-              phx-click="invoke_aspect"
-              phx-value-aspect-id={aspect.id}
-              phx-value-entity-id={@entity.id}
-              phx-value-description={aspect.description}
-              phx-value-free={if(aspect.free_invokes > 0, do: "true", else: "false")}
-              class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
-              data-tooltip={if(aspect.free_invokes > 0, do: "Free invoke", else: "Invoke (spend FP)")}
-            >
-              {if aspect.free_invokes > 0, do: "Free", else: "FP"}
-            </button>
-            <%= if @is_gm do %>
-              <button
-                phx-click="compel_aspect"
-                phx-value-aspect-id={aspect.id}
-                phx-value-entity-id={@entity.id}
-                phx-value-description={aspect.description}
-                class="px-1.5 py-0.5 bg-amber-600/80 hover:bg-amber-500 text-white rounded text-xs leading-none transition"
-                data-tooltip="Compel"
+      <div class={["flex gap-3", @expanded && "flex-row"]}>
+        <div class={if(@expanded, do: "flex-1 min-w-0", else: "w-full")}>
+          <%!-- Aspects --%>
+          <%= for aspect <- visible_aspects(@entity.aspects, @is_gm) do %>
+            <div class={"group/aspect relative flex items-start gap-1 text-xs px-2 py-1 rounded mb-1 #{aspect_style(aspect)}"}>
+              <span
+                class="flex-1 font-semibold text-gray-900"
+                style="font-family: 'Permanent Marker', cursive; font-size: 0.8rem;"
               >
-                C
-              </button>
-            <% end %>
-            <button
-              phx-click="remove_aspect"
-              phx-value-aspect-id={aspect.id}
-              phx-value-entity-id={@entity.id}
-              class="text-red-400 hover:text-red-600 text-xs leading-none transition px-0.5"
-              data-tooltip="Remove"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Consequences --%>
-      <%= for cons <- @entity.consequences do %>
-        <div class={"group/cons flex items-center gap-1 text-xs px-2 py-1 rounded mb-1 #{if cons.recovering, do: "bg-green-50 border-l-2 border-green-300", else: "bg-red-50 border-l-2 border-red-300"}"}>
-          <span class="text-gray-400 uppercase shrink-0" style="font-size: 0.6rem;">
-            {cons.severity}
-          </span>
-          <span
-            class="flex-1 font-semibold text-gray-900"
-            style="font-family: 'Permanent Marker', cursive; font-size: 0.75rem;"
-          >
-            {cons.aspect_text || "—"}
-          </span>
-          <div
-            :if={!@is_observer}
-            class="opacity-0 group-hover/cons:opacity-100 transition-opacity flex gap-0.5 shrink-0"
-          >
-            <%= if cons.recovering do %>
-              <button
-                phx-click="clear_consequence"
-                phx-value-consequence-id={cons.id}
-                phx-value-entity-id={@entity.id}
-                class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
-                data-tooltip="Clear"
-              >
-                <.icon name="hero-check" class="w-3 h-3" />
-              </button>
-            <% else %>
-              <button
-                phx-click="begin_recovery"
-                phx-value-consequence-id={cons.id}
-                phx-value-entity-id={@entity.id}
-                phx-value-aspect-text={cons.aspect_text}
-                class="px-1.5 py-0.5 bg-blue-600/80 hover:bg-blue-500 text-white rounded text-xs leading-none transition"
-                data-tooltip="Begin recovery"
-              >
-                <.icon name="hero-arrow-path" class="w-3 h-3" />
-              </button>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-
-      <%!-- Stress tracks --%>
-      <%= if @entity.stress_tracks != [] do %>
-        <div class="flex gap-2 mt-1">
-          <%= for track <- @entity.stress_tracks do %>
-            <div class="flex items-center gap-0.5">
-              <span class="text-gray-400 text-xs font-bold uppercase" style="font-size: 0.55rem;">
-                {String.first(track.label)}
+                {aspect.description}
               </span>
-              <%= for i <- 1..track.boxes do %>
-                <div
-                  phx-click={unless(@is_observer, do: "apply_stress")}
+              <%= if aspect.free_invokes > 0 do %>
+                <span class="text-green-700">
+                  {"☐" |> String.duplicate(aspect.free_invokes)}
+                </span>
+              <% end %>
+              <%= if aspect.hidden do %>
+                <span class="opacity-50">👁</span>
+              <% end %>
+              <div
+                :if={!@is_observer}
+                class="aspect-inline-menu opacity-0 group-hover/aspect:opacity-100 transition-opacity flex gap-0.5 shrink-0"
+              >
+                <button
+                  phx-click="invoke_aspect"
+                  phx-value-aspect-id={aspect.id}
                   phx-value-entity-id={@entity.id}
-                  phx-value-track-label={track.label}
-                  phx-value-box-index={i}
-                  class={[
-                    "w-4 h-4 border rounded text-center leading-4 cursor-pointer transition-all",
-                    if(i in track.checked,
-                      do: "bg-red-500 border-red-600 text-white",
-                      else: "border-gray-400 text-gray-400 hover:bg-red-100 hover:border-red-300"
-                    )
-                  ]}
-                  style="font-size: 0.55rem;"
+                  phx-value-description={aspect.description}
+                  phx-value-free={if(aspect.free_invokes > 0, do: "true", else: "false")}
+                  class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
+                  data-tooltip={
+                    if(aspect.free_invokes > 0, do: "Free invoke", else: "Invoke (spend FP)")
+                  }
                 >
-                  {i}
+                  {if aspect.free_invokes > 0, do: "Free", else: "FP"}
+                </button>
+                <%= if @is_gm do %>
+                  <button
+                    phx-click="compel_aspect"
+                    phx-value-aspect-id={aspect.id}
+                    phx-value-entity-id={@entity.id}
+                    phx-value-description={aspect.description}
+                    class="px-1.5 py-0.5 bg-amber-600/80 hover:bg-amber-500 text-white rounded text-xs leading-none transition"
+                    data-tooltip="Compel"
+                  >
+                    C
+                  </button>
+                <% end %>
+                <button
+                  phx-click="remove_aspect"
+                  phx-value-aspect-id={aspect.id}
+                  phx-value-entity-id={@entity.id}
+                  class="text-red-400 hover:text-red-600 text-xs leading-none transition px-0.5"
+                  data-tooltip="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          <% end %>
+
+          <%!-- Consequences --%>
+          <%= for cons <- @entity.consequences do %>
+            <div class={"group/cons flex items-center gap-1 text-xs px-2 py-1 rounded mb-1 #{if cons.recovering, do: "bg-green-50 border-l-2 border-green-300", else: "bg-red-50 border-l-2 border-red-300"}"}>
+              <span class="text-gray-400 uppercase shrink-0" style="font-size: 0.6rem;">
+                {cons.severity}
+              </span>
+              <span
+                class="flex-1 font-semibold text-gray-900"
+                style="font-family: 'Permanent Marker', cursive; font-size: 0.75rem;"
+              >
+                {cons.aspect_text || "—"}
+              </span>
+              <div
+                :if={!@is_observer}
+                class="opacity-0 group-hover/cons:opacity-100 transition-opacity flex gap-0.5 shrink-0"
+              >
+                <%= if cons.recovering do %>
+                  <button
+                    phx-click="clear_consequence"
+                    phx-value-consequence-id={cons.id}
+                    phx-value-entity-id={@entity.id}
+                    class="px-1.5 py-0.5 bg-green-600/80 hover:bg-green-500 text-white rounded text-xs leading-none transition"
+                    data-tooltip="Clear"
+                  >
+                    <.icon name="hero-check" class="w-3 h-3" />
+                  </button>
+                <% else %>
+                  <button
+                    phx-click="begin_recovery"
+                    phx-value-consequence-id={cons.id}
+                    phx-value-entity-id={@entity.id}
+                    phx-value-aspect-text={cons.aspect_text}
+                    class="px-1.5 py-0.5 bg-blue-600/80 hover:bg-blue-500 text-white rounded text-xs leading-none transition"
+                    data-tooltip="Begin recovery"
+                  >
+                    <.icon name="hero-arrow-path" class="w-3 h-3" />
+                  </button>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+
+          <%!-- Stress tracks --%>
+          <%= if @entity.stress_tracks != [] do %>
+            <div class="flex gap-2 mt-1">
+              <%= for track <- @entity.stress_tracks do %>
+                <div class="flex items-center gap-0.5">
+                  <span class="text-gray-400 text-xs font-bold uppercase" style="font-size: 0.55rem;">
+                    {String.first(track.label)}
+                  </span>
+                  <%= for i <- 1..track.boxes do %>
+                    <div
+                      phx-click={unless(@is_observer, do: "apply_stress")}
+                      phx-value-entity-id={@entity.id}
+                      phx-value-track-label={track.label}
+                      phx-value-box-index={i}
+                      class={[
+                        "w-4 h-4 border rounded text-center leading-4 cursor-pointer transition-all",
+                        if(i in track.checked,
+                          do: "bg-red-500 border-red-600 text-white",
+                          else: "border-gray-400 text-gray-400 hover:bg-red-100 hover:border-red-300"
+                        )
+                      ]}
+                      style="font-size: 0.55rem;"
+                    >
+                      {i}
+                    </div>
+                  <% end %>
                 </div>
               <% end %>
             </div>
           <% end %>
-        </div>
-      <% end %>
 
-      <%!-- Pending shifts --%>
-      <%= if @entity.pending_shifts do %>
-        <div class="mt-1 px-2 py-1 bg-red-100 border border-red-300 rounded text-xs text-red-700 font-bold animate-pulse">
-          {@entity.pending_shifts.remaining_shifts} shifts!
+          <%!-- Pending shifts --%>
+          <%= if @entity.pending_shifts do %>
+            <div class="mt-1 px-2 py-1 bg-red-100 border border-red-300 rounded text-xs text-red-700 font-bold animate-pulse">
+              {@entity.pending_shifts.remaining_shifts} shifts!
+            </div>
+          <% end %>
         </div>
-      <% end %>
+
+        <%!-- Right column: skills, stunts, details (expanded only) --%>
+        <%= if @expanded do %>
+          <div class="w-40 border-l border-gray-300 pl-3 shrink-0">
+            <%!-- Skills --%>
+            <div class="flex items-center gap-1 mb-1">
+              <div class="text-xs text-gray-400 uppercase tracking-wide font-bold flex-1">Skills</div>
+              <%= unless @is_observer do %>
+                <div class="relative group/add-skill">
+                  <button class="text-gray-400 hover:text-green-600 transition">
+                    <.icon name="hero-plus" class="w-3 h-3" />
+                  </button>
+                  <div class="hidden group-hover/add-skill:block absolute right-0 top-4 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-1 w-32 max-h-48 overflow-y-auto">
+                    <% existing = Map.keys(@entity.skills) %>
+                    <%= for skill <- available_skills() -- existing do %>
+                      <button
+                        phx-click="add_skill"
+                        phx-value-entity-id={@entity.id}
+                        phx-value-skill={skill}
+                        class="block w-full text-left px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded"
+                        style="font-family: 'Patrick Hand', cursive;"
+                      >
+                        {skill}
+                      </button>
+                    <% end %>
+                  </div>
+                </div>
+              <% end %>
+            </div>
+            <%= if @sorted_skills != [] do %>
+              <div class="space-y-0.5 mb-2">
+                <%= for {skill, rating} <- @sorted_skills do %>
+                  <div class="group/skill flex items-center gap-1 text-xs">
+                    <span
+                      class="text-gray-600 flex-1 truncate"
+                      style="font-family: 'Patrick Hand', cursive;"
+                    >
+                      {skill}
+                    </span>
+                    <%= unless @is_observer do %>
+                      <button
+                        phx-click="adjust_skill"
+                        phx-value-entity-id={@entity.id}
+                        phx-value-skill={skill}
+                        phx-value-delta="-1"
+                        class="opacity-0 group-hover/skill:opacity-100 text-gray-400 hover:text-red-500 transition-opacity leading-none"
+                        data-tooltip={if(rating <= 1, do: "Remove skill")}
+                      >
+                        <.icon name="hero-minus" class="w-3 h-3" />
+                      </button>
+                    <% end %>
+                    <span class="font-bold text-gray-900 tabular-nums w-6 text-center">
+                      {if(rating >= 0, do: "+#{rating}", else: "#{rating}")}
+                    </span>
+                    <%= unless @is_observer do %>
+                      <button
+                        phx-click="adjust_skill"
+                        phx-value-entity-id={@entity.id}
+                        phx-value-skill={skill}
+                        phx-value-delta="1"
+                        class="opacity-0 group-hover/skill:opacity-100 text-gray-400 hover:text-green-500 transition-opacity leading-none"
+                      >
+                        <.icon name="hero-plus" class="w-3 h-3" />
+                      </button>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
+
+            <%!-- Stunts --%>
+            <div class="flex items-center gap-1 mb-1">
+              <div class="text-xs text-gray-400 uppercase tracking-wide font-bold flex-1">Stunts</div>
+              <%= unless @is_observer do %>
+                <button
+                  phx-click="open_add_stunt"
+                  phx-value-entity-id={@entity.id}
+                  class="text-gray-400 hover:text-green-600 transition"
+                >
+                  <.icon name="hero-plus" class="w-3 h-3" />
+                </button>
+              <% end %>
+            </div>
+            <%= if @entity.stunts != [] do %>
+              <div class="space-y-1 mb-2">
+                <%= for stunt <- @entity.stunts do %>
+                  <div class="group/stunt text-xs">
+                    <div class="flex items-center gap-1">
+                      <span
+                        class="font-bold text-gray-800 flex-1"
+                        style="font-family: 'Patrick Hand', cursive;"
+                      >
+                        {stunt.name}
+                      </span>
+                      <%= unless @is_observer do %>
+                        <button
+                          phx-click="remove_stunt"
+                          phx-value-entity-id={@entity.id}
+                          phx-value-stunt-id={stunt.id}
+                          data-confirm={"Remove stunt \"#{stunt.name}\"?"}
+                          class="opacity-0 group-hover/stunt:opacity-100 text-red-400 hover:text-red-600 transition-opacity leading-none shrink-0"
+                        >
+                          <.icon name="hero-x-mark" class="w-3 h-3" />
+                        </button>
+                      <% end %>
+                    </div>
+                    <div class="text-gray-500 leading-tight">{stunt.effect}</div>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
+
+            <%!-- Refresh --%>
+            <%= if @entity.refresh do %>
+              <div class="flex items-center gap-1 text-xs mt-1 pt-1 border-t border-gray-200">
+                <span class="text-gray-400 uppercase tracking-wide font-bold">Refresh</span>
+                <span class="ml-auto font-bold text-gray-900">{@entity.refresh}</span>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".RingTrigger">
         export default {
@@ -683,6 +840,64 @@ defmodule FateWeb.TableComponents do
     """
   end
 
+  def table_modal(%{modal: {"stunt_add", _entity_id}} = assigns) do
+    ~H"""
+    <div
+      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+      phx-click="close_table_modal"
+    >
+      <div
+        class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl"
+        phx-click-away="close_table_modal"
+      >
+        <h3
+          class="text-lg font-bold text-amber-100 mb-4"
+          style="font-family: 'Permanent Marker', cursive;"
+        >
+          Add Stunt
+        </h3>
+        <form phx-submit="submit_table_modal" class="space-y-3">
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">Stunt Name</label>
+            <input
+              type="text"
+              name="stunt_name"
+              placeholder="Master Swordswoman"
+              required
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+            />
+          </div>
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">Effect</label>
+            <input
+              type="text"
+              name="stunt_effect"
+              placeholder="+2 to Fight when dueling one-on-one"
+              required
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+            />
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button
+              type="submit"
+              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              phx-click="close_table_modal"
+              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+  end
+
   def table_modal(assigns), do: ~H""
 
   def visible_aspects(aspects, is_gm) do
@@ -702,6 +917,10 @@ defmodule FateWeb.TableComponents do
       :consequence -> "bg-red-50 border-l-2 border-red-300"
       _ -> "bg-gray-100 border-l-2 border-gray-400"
     end
+  end
+
+  def available_skills do
+    ~w(Athletics Burglary Contacts Crafts Deceive Drive Empathy Fight Investigate Lore Notice Physique Provoke Rapport Resources Shoot Stealth Will)
   end
 
   def aspect_card_bg(aspect) do

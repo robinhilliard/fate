@@ -25,6 +25,7 @@ defmodule FateWeb.TableLive do
         |> assign(:state, nil)
         |> assign(:participants, [])
         |> assign(:selection, [])
+        |> assign(:expanded_entities, MapSet.new())
         |> assign(:current_scene_id, nil)
         |> assign(:table_modal, nil)
 
@@ -214,6 +215,99 @@ defmodule FateWeb.TableLive do
     })
 
     {:noreply, socket}
+  end
+
+  def handle_event("toggle_expand", %{"entity-id" => entity_id}, socket) do
+    expanded = socket.assigns.expanded_entities
+
+    expanded =
+      if MapSet.member?(expanded, entity_id),
+        do: MapSet.delete(expanded, entity_id),
+        else: MapSet.put(expanded, entity_id)
+
+    {:noreply, assign(socket, :expanded_entities, expanded)}
+  end
+
+  def handle_event(
+        "adjust_skill",
+        %{"entity-id" => entity_id, "skill" => skill, "delta" => delta},
+        socket
+      ) do
+    {delta, _} = Integer.parse(delta)
+    state = socket.assigns.state
+    entity = Map.get(state.entities, entity_id)
+    current = (entity && Map.get(entity.skills, skill, 0)) || 0
+    new_rating = current + delta
+
+    if new_rating <= 0 do
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+        type: :skill_set,
+        target_id: entity_id,
+        description: "Remove #{skill}",
+        detail: %{"entity_id" => entity_id, "skill" => skill, "rating" => 0}
+      })
+    else
+      Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+        type: :skill_set,
+        target_id: entity_id,
+        description: "#{skill} → +#{new_rating}",
+        detail: %{"entity_id" => entity_id, "skill" => skill, "rating" => new_rating}
+      })
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("remove_stunt", %{"entity-id" => entity_id, "stunt-id" => stunt_id}, socket) do
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+      type: :stunt_remove,
+      target_id: entity_id,
+      description: "Remove stunt",
+      detail: %{"entity_id" => entity_id, "stunt_id" => stunt_id}
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_event("add_skill", %{"entity-id" => entity_id, "skill" => skill}, socket) do
+    Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+      type: :skill_set,
+      target_id: entity_id,
+      description: "#{skill} → +1",
+      detail: %{"entity_id" => entity_id, "skill" => skill, "rating" => 1}
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_event("open_add_stunt", %{"entity-id" => entity_id}, socket) do
+    {:noreply, assign(socket, :table_modal, {"stunt_add", entity_id})}
+  end
+
+  def handle_event(
+        "submit_table_modal",
+        %{"stunt_name" => name, "stunt_effect" => effect} = params,
+        socket
+      ) do
+    case socket.assigns.table_modal do
+      {"stunt_add", entity_id} ->
+        Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+          type: :stunt_add,
+          target_id: entity_id,
+          description: "Stunt: #{name}",
+          detail: %{
+            "entity_id" => entity_id,
+            "stunt_id" => Ash.UUID.generate(),
+            "name" => name,
+            "effect" => effect
+          }
+        })
+
+        {:noreply, assign(socket, :table_modal, nil)}
+
+      _ ->
+        handle_event("submit_table_modal", params, socket)
+    end
   end
 
   def handle_event("select", %{"id" => id, "type" => type}, socket) do
@@ -555,35 +649,35 @@ defmodule FateWeb.TableLive do
                 <.icon name="hero-cog-6-tooth" class="w-3 h-3 text-amber-200" />
                 <.gm_notes_ring state={@state} current_scene_id={@current_scene_id} />
               </div>
-                <%= if gm_scene do %>
+              <%= if gm_scene do %>
+                <div
+                  class="text-sm font-bold text-amber-100/90 mb-1"
+                  style="font-family: 'Patrick Hand', cursive;"
+                >
+                  {gm_scene.name}
+                </div>
+                <%= if gm_scene.description do %>
                   <div
-                    class="text-sm font-bold text-amber-100/90 mb-1"
-                    style="font-family: 'Patrick Hand', cursive;"
+                    class="text-lg text-amber-200/50 mb-2 leading-snug"
+                    style="font-family: 'Caveat', cursive;"
                   >
-                    {gm_scene.name}
-                  </div>
-                  <%= if gm_scene.description do %>
-                    <div
-                      class="text-lg text-amber-200/50 mb-2 leading-snug"
-                      style="font-family: 'Caveat', cursive;"
-                    >
-                      {gm_scene.description}
-                    </div>
-                  <% end %>
-                <% end %>
-                <%= if gm_scene && gm_scene.gm_notes do %>
-                  <div
-                    class="text-sm text-amber-200/60 border-t border-amber-700/20 pt-2 mt-1 leading-snug"
-                    style="font-family: 'Patrick Hand', cursive;"
-                  >
-                    {gm_scene.gm_notes}
+                    {gm_scene.description}
                   </div>
                 <% end %>
-                <%= if is_nil(gm_scene) do %>
-                  <div class="text-xs text-amber-200/30 italic">No active scene</div>
-                <% end %>
-                <div class="text-xs text-amber-200/20 mt-2 uppercase tracking-wide">GM Notes</div>
-                <div class="gm-resize-handle" id="gm-notes-resize" phx-hook=".GmNotesResize"></div>
+              <% end %>
+              <%= if gm_scene && gm_scene.gm_notes do %>
+                <div
+                  class="text-sm text-amber-200/60 border-t border-amber-700/20 pt-2 mt-1 leading-snug"
+                  style="font-family: 'Patrick Hand', cursive;"
+                >
+                  {gm_scene.gm_notes}
+                </div>
+              <% end %>
+              <%= if is_nil(gm_scene) do %>
+                <div class="text-xs text-amber-200/30 italic">No active scene</div>
+              <% end %>
+              <div class="text-xs text-amber-200/20 mt-2 uppercase tracking-wide">GM Notes</div>
+              <div class="gm-resize-handle" id="gm-notes-resize" phx-hook=".GmNotesResize"></div>
             </div>
           </div>
         <% end %>
@@ -651,6 +745,8 @@ defmodule FateWeb.TableLive do
               is_gm={@is_gm}
               is_observer={@is_observer}
               selected={%{id: entity.id, type: "entity"} in @selection}
+              expanded={MapSet.member?(@expanded_entities, entity.id)}
+              can_expand={@is_gm || entity.kind == :pc}
             />
           </div>
         <% end %>
@@ -668,6 +764,8 @@ defmodule FateWeb.TableLive do
                 is_gm={@is_gm}
                 is_observer={@is_observer}
                 selected={%{id: entity.id, type: "entity"} in @selection}
+                expanded={MapSet.member?(@expanded_entities, entity.id)}
+                can_expand={true}
               />
             </div>
           <% end %>
@@ -686,6 +784,8 @@ defmodule FateWeb.TableLive do
               is_gm={@is_gm}
               is_observer={@is_observer}
               selected={%{id: entity.id, type: "entity"} in @selection}
+              expanded={MapSet.member?(@expanded_entities, entity.id)}
+              can_expand={@is_gm || entity.kind == :pc}
             />
           </div>
         <% end %>
