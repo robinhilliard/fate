@@ -4,13 +4,26 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: fate_dev
+      POSTGRES_DB: fate_prod
     volumes:
-      - ./data/pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - "${FATEBLE_DATA_DIR:-~/.fateble}/pgdata:/var/lib/postgresql/data"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      DATABASE_URL: "ecto://postgres:postgres@db/fate_prod"
+      SECRET_KEY_BASE: "G0fltHiU4xYPLHlz8Mzyr6nZbDJIuV/KNXSflAR7JoUhf1iIUkppBNK4hW+10xzbhVXIyXlOSWSqVoo1vmpVQg=="
+      PHX_HOST: localhost
+      PHX_SCHEME: http
+      PORT: "4000"
+      PHX_SERVER: "true"

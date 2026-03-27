@@ -1,0 +1,30 @@
+_build/
+deps/
+.git/
+.gitignore
+data/
+tmp/
+cover/
+doc/
+*.ez
+erl_crash.dump
+
+# Rebuilt inside Docker
+priv/static/assets/
+priv/static/cache_manifest.json
+
+# Node / editor artifacts
+assets/node_modules/
+npm-debug.log
+.DS_Store
+
+# Docker-specific
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Dev/test only
+test/
+.formatter.exs
+.credo.exs
+AGENTS.md

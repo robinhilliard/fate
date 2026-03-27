@@ -113,13 +113,40 @@ On first visit, you choose a name and role. Your choice is stored in the browser
 
 **Observer** -- Read-only view of the public game state. Can watch the table and browse the event log but cannot take any actions. Layout memory still works so observers can arrange their view. Observers have no database record -- they exist only in the browser.
 
-## Getting Started
+## Quick Start (Docker)
+
+The fastest way to run Fateble with no Elixir or PostgreSQL installation required.
+
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+
+```bash
+git clone <repo-url>
+cd fate
+docker compose up
+```
+
+Open [http://localhost:4000](http://localhost:4000). The app bootstraps a demo scenario (Sindral Reach) on first visit.
+
+Database files are stored in `~/.fateble/pgdata` on your machine, so your data persists across restarts. To change the storage location, set `FATEBLE_DATA_DIR` before starting:
+
+```bash
+FATEBLE_DATA_DIR=/path/to/data docker compose up
+```
+
+To reset everything: `docker compose down` and delete `~/.fateble`.
+
+## Getting Started (Development)
+
+For contributors or anyone who wants to work on the code directly.
 
 **Prerequisites:** Elixir 1.17+, PostgreSQL 16+
 
+Start the dev database, then run the app:
+
 ```bash
-mix setup              # Install deps, create DB, run migrations
-mix phx.server         # Start at http://localhost:4000
+docker compose -f docker-compose.dev.yml up -d   # Start PostgreSQL
+mix setup                                          # Install deps, create DB, run migrations
+mix phx.server                                     # Start at http://localhost:4000
 ```
 
 The app bootstraps a demo scenario (Sindral Reach) on first visit.
