@@ -81,27 +81,43 @@ Every game action -- creating a character, rolling dice, taking stress -- is rec
 
 The app runs across two browser windows that stay in sync with each other and those of other players:
 
-**The Table** (`/table/:bookmark_id`) is the main play surface -- a full-screen canvas with a felt-texture background where everything floats in a spring-physics layout.
+#### The Table
 
-- **Entity cards** show name, kind, aspects, stress boxes, consequences, and a fate point token. Cards are color-coded by entity and styled with hand-drawn fonts (Patrick Hand, Permanent Marker, Caveat).
-- **Ring menus** appear on hover over the fate point token or the GM notes cog. Buttons fan out in a viewport-aware arc for quick actions: +/- FP, concede, hide/reveal, remove, scene management.
-- **Zones** are dashed-border regions on the table. Drag an entity's token into a zone to move them; drag out onto the table to leave.
-- **Scene aspects** float as small cards near the center, styled by role (blue for situation, yellow for boosts).
-- **Spring layout** keeps everything organized with force-directed physics: entities gravitate toward their anchor (scene center, GM area, or their controller's seat on the border), repel each other to avoid overlap, and settle into a readable arrangement.
-- **Pinning** -- double-click any card to pin it in place (shown with a pin emoji). Pinned cards keep their position across scene changes.
-- **Layout memory** -- element positions persist in localStorage per bookmark and scene, and rescale on window resize.
-- **Participants** sit around the border of the table, with the GM on one edge and players distributed around the remaining sides. Controlled entities gravitate toward their controller.
-- **Warp animations** -- entities and aspects fade in/out smoothly when created or removed.
-- **Selection** -- click an entity or aspect card to select it (yellow ring highlight). Selections sync across the Table and Actions windows.
+`/table/:bookmark_id` is the main play surface — a full-screen canvas with a felt-texture background where everything floats in a spring-physics layout. Entity cards, zones, scene aspects, and the GM notes card are all draggable elements that repel each other and settle into a readable arrangement.
 
-**The Actions Window** (`/actions/:bookmark_id`) opens in a second tab for the event log, bookmark tree, and the action palette.
+**Entity cards** show name, kind, aspects, skills, stunts, stress boxes, consequences, and a fate point token. Cards are color-coded by entity and styled with hand-drawn fonts. Click the expand button to reveal the full character sheet. **Ring menus** appear on hover over the fate point token — buttons fan out in a viewport-aware arc for quick actions like +/- FP, concede, hide/reveal, and remove.
 
-- **Bookmark tree** shows the branching timeline with locked parents and navigable leaves. Fork from any bookmark to create a new branch.
-- **Event log** shows the history of game events, newest first. Events can be deleted (GM only) by hovering to reveal the remove button.
-- **Exchange builder** -- start an Attack, Overcome, Create Advantage, or Defend exchange. Add steps (rolls, invokes, shifts, stress, consequences) to a build lane, configure each with inline forms, then commit all steps to the log at once.
-- **Fudge dice** -- click dice faces to cycle +/0/- manually, or hit Roll for random. The total updates live as dice and skill are selected.
-- **Quick actions** -- a grid of buttons for one-shot actions (create aspect, move entity, spend FP, start scene, etc.). Each opens a modal form.
-- **Drag-and-drop** -- drag an entity from the entity list onto an exchange type or quick action button to start that action pre-filled with the entity.
+<img src="priv/static/images/entity_card.png" alt="Entity card showing aspects, skills, stunts, stress tracks, and ring menu" width="400">
+
+**The GM notes card** shows the current scene name, description, and private GM notes. Its ring menu provides scene management: start/end/switch scenes, add zones, and add situational aspects.
+
+<img src="priv/static/images/scene_notes.png" alt="GM scene notes card with ring menu for scene management" width="350">
+
+**Zones** are dashed-border regions on the table. Drag an entity's token into a zone to move them; drag out onto the table to leave. The GM can hide and reveal zones for players.
+
+<img src="priv/static/images/zones.png" alt="Zones with entity tokens — drag to move between zones" width="400">
+
+**Scene aspects** float as small cards near the scene title, styled by role — blue for situation aspects, yellow for boosts. The scene title and description are visible to all players.
+
+<img src="priv/static/images/scene_and_aspects.png" alt="Scene title, description, and situational aspect cards on the table" width="500">
+
+The table also supports **pinning** (double-click to lock a card in place), **layout memory** (positions persist in localStorage per bookmark and scene), **warp animations** (entities and aspects fade in/out smoothly), and **selection sync** (click to select; selections sync across Table and Actions windows). **Participants** sit around the border of the table, with the GM on one edge and players distributed around the remaining sides.
+
+#### The Actions Window
+
+`/actions/:bookmark_id` opens in a second tab for the event log, bookmark tree, and action palette.
+
+**Bookmarks** organize the game as a branching timeline. Each bookmark is a save point — fork from any bookmark to explore alternate scenarios, then switch back. Locked parent bookmarks form a shared foundation for all child timelines.
+
+<img src="priv/static/images/bookmarks.png" alt="Bookmark tree with locked parent and navigable child bookmark" width="500">
+
+The left panel shows the **event log** — a complete history of game events, newest first. The GM can delete or reorder events by dragging. Invalid events (those referencing missing targets) are flagged with a warning icon. The right panel has the **action palette** with exchange starters, quick action buttons, and the entity list. Drag an entity onto any action button to pre-fill it.
+
+<img src="priv/static/images/events_and_action_pallette.png" alt="Event log with color-coded entries and the action palette with exchange starters, quick actions, and entity list" width="600">
+
+The **exchange builder** handles multi-step conflicts. Start an Attack, Overcome, Create Advantage, or Defend exchange, then collaboratively build a sequence of steps — rolls, invokes, shifts, stress, consequences — in a shared build lane. Drag steps from the palette to reorder, or drag them out to remove. Click dice faces to cycle +/0/- manually, or hit Roll for random. When ready, commit all steps to the event log at once.
+
+<img src="priv/static/images/exchange_builder.png" alt="Exchange builder with step palette, build lane, and roll configuration" width="400">
 
 ### Roles
 

@@ -1219,7 +1219,7 @@ defmodule FateWeb.ActionsLive do
         text = detail["text"] || event.description || ""
         resolved = target || target_name(state, event.target_id, detail["target_type"])
         truncated = if String.length(text) > 60, do: String.slice(text, 0..57) <> "...", else: text
-        if resolved, do: "📝 #{truncated} (#{resolved})", else: "📝 #{truncated}"
+        if resolved, do: "#{truncated} (#{resolved})", else: truncated
 
       _ ->
         event.description || to_string(event.type)
