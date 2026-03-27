@@ -8,7 +8,7 @@ A virtual tabletop for the [Fate RPG system](https://fate-srd.com/), built with 
 
 ## Features
 
-The app is built around an **event-sourced engine**: every game action (creating a character, rolling dice, taking stress) is an immutable event. The current game state is derived by replaying the event chain. Bookmarks let you branch the timeline for "what if" scenarios or session checkpoints.
+Every game action -- creating a character, rolling dice, taking stress -- is recorded as an event. The full game state is always derived from this event history, which means nothing is ever lost. **Bookmarks** are save points in this history: you can branch off from any bookmark to explore "what if" scenarios, then switch back to the original timeline whenever you like.
 
 ### Feature Matrix
 
@@ -79,7 +79,7 @@ The app is built around an **event-sourced engine**: every game action (creating
 
 ### User Interface
 
-The app runs across two browser windows that stay in sync via PubSub.
+The app runs across two browser windows that stay in sync with each other and those of other players:
 
 **The Table** (`/table/:bookmark_id`) is the main play surface -- a full-screen canvas with a felt-texture background where everything floats in a spring-physics layout.
 
@@ -125,7 +125,7 @@ cd fate
 docker compose up
 ```
 
-Open [http://localhost:4000](http://localhost:4000). The app bootstraps a demo scenario (Sindral Reach) on first visit.
+Open [http://localhost:4000](http://localhost:4000). When you join for the first time, the app creates a demo scenario (The Iron Carnival) to get you started.
 
 Database files are stored in `~/.fateble/pgdata` on your machine, so your data persists across restarts. To change the storage location, set `FATEBLE_DATA_DIR` before starting:
 
@@ -149,11 +149,13 @@ mix setup                                          # Install deps, create DB, ru
 mix phx.server                                     # Start at http://localhost:4000
 ```
 
-The app bootstraps a demo scenario (Sindral Reach) on first visit.
+When you join for the first time, the app creates a demo scenario (The Iron Carnival) to get you started.
 
 **MCP endpoint:** `http://localhost:4000/api/mcp` (SSE transport, CORS enabled)
 
 ## Architecture
+
+The app is built around an **event-sourced engine**: every game action is an immutable event. Events form a linked chain (each points to its parent) and the chain is replayed to produce the current `DerivedState`. **Bookmarks** point to a head event; forking a bookmark creates a new chain branch from that point. **Participants** are people at the table (GM + players) and entities can be controlled by a participant.
 
 ```
 lib/
@@ -168,9 +170,12 @@ lib/
 │   │   ├── demo.ex            # Demo scenario seed data
 │   │   ├── bookmark.ex        # Ash resource
 │   │   ├── bookmark_participant.ex
-│   │   ├── event.ex           # Ash resource (36 event types)
+│   │   ├── event.ex           # Ash resource (37 event types)
+│   │   ├── events.ex          # Event creation helpers
 │   │   └── participant.ex
-│   └── mcp_server.ex          # MCP protocol handler for AI assistants
+│   ├── mcp_server.ex          # MCP protocol handler for AI assistants
+│   ├── release.ex             # Release tasks (migrations without Mix)
+│   └── repo.ex                # Ecto/AshPostgres repo
 ├── fate_web/
 │   ├── live/
 │   │   ├── table_live.ex      # Main tabletop view
@@ -183,8 +188,6 @@ lib/
 │   │   └── layouts.ex
 │   └── helpers.ex             # Shared LiveView helpers
 ```
-
-**Events** are immutable and form a linked chain (each points to its parent). The chain is replayed to produce the current `DerivedState`. **Bookmarks** point to a head event; forking a bookmark creates a new chain branch from that point. **Participants** are people at the table (GM + players) and entities can be controlled by a participant.
 
 ## Development
 
