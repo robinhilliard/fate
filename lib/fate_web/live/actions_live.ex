@@ -2666,35 +2666,53 @@ defmodule FateWeb.ActionsLive do
   defp die_class(_), do: "bg-gray-600 text-gray-300 border-gray-500"
 
   defp build_step_description(step, state) do
+    actor = entity_name(state, step.actor_id)
+    target = entity_name(state, step.target_id)
+
     case step.type do
       type when type in @roll_types ->
-        action = type |> to_string() |> String.replace("roll_", "")
         skill = step.detail["skill"] || "?"
         dice = step.detail["fudge_dice"] || []
         total = step.detail["raw_total"] || 0
         dice_str = dice |> Enum.map(&die_display/1) |> Enum.join("")
-        "#{String.capitalize(action)} #{skill} [#{dice_str}] = #{format_rating(total)}"
+        who = actor || "?"
+        vs = if target, do: " vs #{target}", else: ""
+        "#{who} #{skill} [#{dice_str}] = #{format_rating(total)}#{vs}"
 
       :invoke ->
+        who = actor || "?"
         desc = step.detail["description"] || "aspect"
-        if step.detail["free"], do: "Invoke: #{desc} (free)", else: "Invoke: #{desc} (FP)"
+        if step.detail["free"], do: "#{who}: #{desc} (free)", else: "#{who}: #{desc} (FP)"
 
       :shifts_resolved ->
         shifts = step.detail["shifts"] || 0
-        outcome = step.detail["outcome"] || ""
-        "#{shifts} shifts — #{outcome}"
+        on = if target, do: " on #{target}", else: ""
+        "#{shifts} shifts#{on}"
 
       :stress_apply ->
-        target = entity_name(state, step.target_id)
         track = step.detail["track_label"] || "?"
         box = step.detail["box_index"] || "?"
         "#{target || "?"} #{track} box #{box}"
 
       :consequence_take ->
-        target = entity_name(state, step.target_id)
         sev = step.detail["severity"] || "mild"
         text = step.detail["aspect_text"] || "?"
         "#{target || "?"} #{sev}: #{text}"
+
+      :redirect_hit ->
+        from = actor || "?"
+        to = target || "?"
+        "#{from} → #{to}"
+
+      :concede ->
+        "#{actor || "?"} concedes"
+
+      :taken_out ->
+        "#{target || actor || "?"} taken out"
+
+      :aspect_create ->
+        desc = step.detail["description"] || "?"
+        "#{desc}#{if target, do: " on #{target}"}"
 
       _ ->
         to_string(step.type)
