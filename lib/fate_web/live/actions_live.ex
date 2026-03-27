@@ -59,6 +59,7 @@ defmodule FateWeb.ActionsLive do
         |> assign(:events, [])
         |> assign(:invalid_event_ids, MapSet.new())
         |> assign(:state, nil)
+        |> assign(:participants, [])
         |> assign(:is_gm, identity.is_gm)
         |> assign(:is_observer, identity.is_observer)
         |> assign(:current_participant_id, identity.participant_id)
@@ -84,12 +85,14 @@ defmodule FateWeb.ActionsLive do
 
       with {:ok, state} <- Engine.derive_state(bookmark_id) do
         events = load_events_for_role(bookmark_id, socket.assigns.is_gm)
+        participants = Fate.Game.Bookmarks.load_participants(bookmark_id)
 
         {:noreply,
          socket
          |> assign(:bookmark_id, bookmark_id)
          |> assign(:events, events)
          |> assign(:invalid_event_ids, Replay.validate_chain(events))
+         |> assign(:participants, participants)
          |> assign(:state, state)}
       else
         _ ->
@@ -441,6 +444,23 @@ defmodule FateWeb.ActionsLive do
     {:noreply, socket |> assign(:modal, nil) |> assign(:form_data, %{})}
   end
 
+  def handle_event("modal_form_changed", params, socket) do
+    socket =
+      case socket.assigns.modal do
+        modal when modal in ["entity_edit", "skill_set", "stunt_add", "stunt_remove"] ->
+          if params["entity_id"] && params["entity_id"] != "" do
+            assign(socket, :prefill_entity_id, params["entity_id"])
+          else
+            socket
+          end
+
+        _ ->
+          socket
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_event("submit_modal", params, socket) do
     result =
       case socket.assigns.modal do
@@ -479,10 +499,23 @@ defmodule FateWeb.ActionsLive do
           })
 
         "entity_move" ->
+          zone_name =
+            if socket.assigns.state do
+              socket.assigns.state.scenes
+              |> Enum.flat_map(& &1.zones)
+              |> Enum.find(&(&1.id == params["zone_id"]))
+              |> case do
+                nil -> "zone"
+                z -> z.name
+              end
+            else
+              "zone"
+            end
+
           Engine.append_event(socket.assigns.bookmark_id, %{
             type: :entity_move,
             actor_id: params["entity_id"],
-            description: "Move to #{params["zone_name"] || "zone"}",
+            description: "Move to #{zone_name}",
             detail: %{"entity_id" => params["entity_id"], "zone_id" => params["zone_id"]}
           })
 
@@ -536,11 +569,22 @@ defmodule FateWeb.ActionsLive do
           })
 
         "entity_create" ->
+          controller_id = if params["controller_id"] != "", do: params["controller_id"]
+
+          color =
+            if controller_id do
+              bp = Enum.find(socket.assigns.participants, &(&1.participant_id == controller_id))
+              if bp, do: bp.participant.color, else: "#6b7280"
+            else
+              "#6b7280"
+            end
+
           detail = %{
             "entity_id" => Ash.UUID.generate(),
             "name" => params["name"],
             "kind" => params["kind"] || "npc",
-            "color" => params["color"] || "#6b7280",
+            "color" => color,
+            "controller_id" => controller_id,
             "fate_points" => parse_int(params["fate_points"]),
             "refresh" => parse_int(params["refresh"]),
             "parent_entity_id" => params["parent_entity_id"]
@@ -573,11 +617,20 @@ defmodule FateWeb.ActionsLive do
           })
 
         "entity_edit" ->
+          edit_controller_id = if params["controller_id"] != "", do: params["controller_id"]
+
+          edit_color =
+            if edit_controller_id do
+              bp = Enum.find(socket.assigns.participants, &(&1.participant_id == edit_controller_id))
+              if bp, do: bp.participant.color, else: nil
+            end
+
           detail =
             %{"entity_id" => params["entity_id"]}
             |> put_non_empty("name", params["name"])
             |> put_non_empty("kind", params["kind"])
-            |> put_non_empty("color", params["color"])
+            |> put_non_empty("color", edit_color)
+            |> put_non_empty("controller_id", edit_controller_id)
             |> maybe_put_int("fate_points", params["fate_points"])
             |> maybe_put_int("refresh", params["refresh"])
 
@@ -860,7 +913,7 @@ defmodule FateWeb.ActionsLive do
 
       <%!-- Modal overlay (not for observers) --%>
       <%= unless @is_observer do %>
-        <.action_modal modal={@modal} state={@state} prefill_entity_id={@prefill_entity_id} form_data={@form_data} />
+        <.action_modal modal={@modal} state={@state} prefill_entity_id={@prefill_entity_id} form_data={@form_data} participants={@participants} />
       <% end %>
       <%!-- Left panel: Event Log / Bookmarks tabs --%>
       <div class="w-1/2 border-r border-amber-900/30 flex flex-col">
@@ -2236,13 +2289,14 @@ defmodule FateWeb.ActionsLive do
           {modal_title(@modal)}
         </h3>
 
-        <form phx-submit="submit_modal" class="space-y-3">
+        <form phx-submit="submit_modal" phx-change="modal_form_changed" class="space-y-3">
           <.modal_fields
             modal={@modal}
             entities={@entities}
             state={@state}
             prefill_entity_id={@prefill_entity_id}
             form_data={@form_data}
+            participants={@participants}
           />
 
           <div class="flex gap-2 pt-2">
@@ -2327,6 +2381,7 @@ defmodule FateWeb.ActionsLive do
       name="description"
       label="Aspect Text"
       placeholder="e.g. On Fire! or Flanking Position"
+      required={true}
     />
     <.select_input
       name="role"
@@ -2356,10 +2411,17 @@ defmodule FateWeb.ActionsLive do
         []
       end
 
-    assigns = assign(assigns, :parent_options, parent_options)
+    controller_options =
+      assigns[:participants]
+      |> Enum.map(fn bp -> {bp.participant_id, "#{bp.participant.name} (#{bp.role})"} end)
+
+    assigns =
+      assigns
+      |> assign(:parent_options, parent_options)
+      |> assign(:controller_options, controller_options)
 
     ~H"""
-    <.text_input name="name" label="Name" placeholder="Character name" />
+    <.text_input name="name" label="Name" placeholder="Character name" required={true} />
     <.select_input
       name="kind"
       label="Kind"
@@ -2374,7 +2436,18 @@ defmodule FateWeb.ActionsLive do
         {"custom", "Custom"}
       ]}
     />
-    <.text_input name="color" label="Color" placeholder="#dc2626" />
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Controller (optional)</label>
+      <select
+        name="controller_id"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
+        <option value="">None (GM-controlled)</option>
+        <%= for {id, label} <- @controller_options do %>
+          <option value={id}>{label}</option>
+        <% end %>
+      </select>
+    </div>
     <.text_input name="fate_points" label="Fate Points" placeholder="3" />
     <.text_input name="refresh" label="Refresh" placeholder="3" />
     <div>
@@ -2385,7 +2458,7 @@ defmodule FateWeb.ActionsLive do
       >
         <option value="">None</option>
         <%= for {id, label} <- @parent_options do %>
-          <option value={id}>{label}</option>
+          <option value={id} selected={id == @prefill_entity_id}>{label}</option>
         <% end %>
       </select>
     </div>
@@ -2405,7 +2478,7 @@ defmodule FateWeb.ActionsLive do
 
   defp modal_fields(%{modal: "scene_start"} = assigns) do
     ~H"""
-    <.text_input name="name" label="Scene Name" placeholder="Dockside Warehouse" />
+    <.text_input name="name" label="Scene Name" placeholder="Dockside Warehouse" required={true} />
     <.text_input
       name="scene_description"
       label="Description"
@@ -2472,35 +2545,103 @@ defmodule FateWeb.ActionsLive do
     />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">To Zone</label>
-      <select
-        name="zone_id"
-        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
-      >
-        <%= for zone <- @zones do %>
-          <option value={zone.id}>{zone.name}</option>
-        <% end %>
-      </select>
+      <%= if @zones == [] do %>
+        <p class="text-sm text-amber-200/40 italic">No zones available — create a scene with zones first</p>
+      <% else %>
+        <select
+          name="zone_id"
+          class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+        >
+          <%= for zone <- @zones do %>
+            <option value={zone.id}>{zone.name}</option>
+          <% end %>
+        </select>
+      <% end %>
     </div>
     """
   end
 
   defp modal_fields(%{modal: "aspect_compel"} = assigns) do
+    aspects =
+      if assigns.state do
+        assigns.state.entities
+        |> Map.values()
+        |> Enum.flat_map(fn e ->
+          Enum.map(e.aspects, fn a ->
+            {a.id, "#{e.name}: #{a.description}"}
+          end)
+        end)
+      else
+        []
+      end
+
+    assigns = assign(assigns, :aspects, aspects)
+
     ~H"""
+    <.entity_select
+      name="actor_id"
+      label="Compelling Entity (GM/NPC)"
+      entities={@entities}
+      selected={nil}
+    />
     <.entity_select
       name="target_id"
       label="Target Entity"
       entities={@entities}
       selected={@prefill_entity_id}
     />
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Aspect</label>
+      <select
+        name="aspect_id"
+        required
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
+        <option value="">Select aspect...</option>
+        <%= for {id, label} <- @aspects do %>
+          <option value={id}>{label}</option>
+        <% end %>
+      </select>
+    </div>
     <.text_input
       name="description"
       label="Compel Description"
       placeholder="What complication does this cause?"
     />
+    <div class="flex items-center gap-2">
+      <input type="hidden" name="accepted" value="false" />
+      <input
+        type="checkbox"
+        name="accepted"
+        value="true"
+        checked
+        class="rounded bg-amber-900/30 border-amber-700/30 text-amber-600"
+      />
+      <label class="text-sm text-amber-200/70">Accepted</label>
+    </div>
     """
   end
 
   defp modal_fields(%{modal: "entity_edit"} = assigns) do
+    entity =
+      if assigns.prefill_entity_id && assigns.state do
+        Map.get(assigns.state.entities, assigns.prefill_entity_id)
+      end
+
+    controller_options =
+      assigns[:participants]
+      |> Enum.map(fn bp -> {bp.participant_id, "#{bp.participant.name} (#{bp.role})"} end)
+
+    assigns =
+      assigns
+      |> assign(:entity, entity)
+      |> assign(:e_name, if(entity, do: entity.name, else: nil))
+      |> assign(:e_kind, if(entity, do: to_string(entity.kind), else: nil))
+      |> assign(:e_controller, if(entity, do: entity.controller_id, else: nil))
+      |> assign(:e_fp, if(entity && entity.fate_points, do: to_string(entity.fate_points), else: nil))
+      |> assign(:e_refresh, if(entity && entity.refresh, do: to_string(entity.refresh), else: nil))
+      |> assign(:controller_options, controller_options)
+
     ~H"""
     <.entity_select
       name="entity_id"
@@ -2508,10 +2649,11 @@ defmodule FateWeb.ActionsLive do
       entities={@entities}
       selected={@prefill_entity_id}
     />
-    <.text_input name="name" label="Name" placeholder="New name" />
+    <.text_input name="name" label="Name" value={@e_name} placeholder="Name" />
     <.select_input
       name="kind"
       label="Kind"
+      selected={@e_kind}
       options={[
         {"", "— no change —"},
         {"pc", "PC"},
@@ -2524,9 +2666,20 @@ defmodule FateWeb.ActionsLive do
         {"custom", "Custom"}
       ]}
     />
-    <.text_input name="color" label="Color" placeholder="#dc2626" />
-    <.text_input name="fate_points" label="Fate Points" placeholder="" />
-    <.text_input name="refresh" label="Refresh" placeholder="" />
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Controller</label>
+      <select
+        name="controller_id"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+      >
+        <option value="">None (GM-controlled)</option>
+        <%= for {id, label} <- @controller_options do %>
+          <option value={id} selected={id == @e_controller}>{label}</option>
+        <% end %>
+      </select>
+    </div>
+    <.text_input name="fate_points" label="Fate Points" value={@e_fp} placeholder="" />
+    <.text_input name="refresh" label="Refresh" value={@e_refresh} placeholder="" />
     """
   end
 
@@ -2544,14 +2697,18 @@ defmodule FateWeb.ActionsLive do
     />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">Skill</label>
-      <select
-        name="skill"
-        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
-      >
-        <%= for skill <- @skill_list do %>
-          <option value={skill}>{skill}</option>
-        <% end %>
-      </select>
+      <%= if @skill_list == [] do %>
+        <p class="text-sm text-amber-200/40 italic">No skills defined — set a system first</p>
+      <% else %>
+        <select
+          name="skill"
+          class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+        >
+          <%= for skill <- @skill_list do %>
+            <option value={skill}>{skill}</option>
+          <% end %>
+        </select>
+      <% end %>
     </div>
     <.text_input name="rating" label="Rating" placeholder="2" />
     """
@@ -2571,15 +2728,24 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "stunt_remove"} = assigns) do
+    entity =
+      if assigns.prefill_entity_id && assigns.state,
+        do: Map.get(assigns.state.entities, assigns.prefill_entity_id),
+        else: nil
+
     stunts =
-      if assigns.state do
-        assigns.state.entities
-        |> Map.values()
-        |> Enum.flat_map(fn e ->
-          Enum.map(e.stunts, fn s -> {s.id, "#{e.name}: #{s.name}"} end)
-        end)
+      if entity do
+        Enum.map(entity.stunts, fn s -> {s.id, s.name} end)
       else
-        []
+        if assigns.state do
+          assigns.state.entities
+          |> Map.values()
+          |> Enum.flat_map(fn e ->
+            Enum.map(e.stunts, fn s -> {s.id, "#{e.name}: #{s.name}"} end)
+          end)
+        else
+          []
+        end
       end
 
     assigns = assign(assigns, :stunts, stunts)
@@ -2597,6 +2763,7 @@ defmodule FateWeb.ActionsLive do
         name="stunt_id"
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
       >
+        <option value="">Select stunt...</option>
         <%= for {id, label} <- @stunts do %>
           <option value={id}>{label}</option>
         <% end %>
@@ -2624,7 +2791,14 @@ defmodule FateWeb.ActionsLive do
         do: Enum.filter(assigns.state.scenes, &(&1.status == :active)),
         else: []
 
-    assigns = assign(assigns, :scenes, scenes)
+    first_scene = List.first(scenes)
+
+    assigns =
+      assigns
+      |> assign(:scenes, scenes)
+      |> assign(:s_name, if(first_scene, do: first_scene.name, else: nil))
+      |> assign(:s_desc, if(first_scene, do: first_scene.description, else: nil))
+      |> assign(:s_notes, if(first_scene, do: first_scene.gm_notes, else: nil))
 
     ~H"""
     <div>
@@ -2638,10 +2812,11 @@ defmodule FateWeb.ActionsLive do
         <% end %>
       </select>
     </div>
-    <.text_input name="name" label="Name" placeholder="Scene name" />
+    <.text_input name="name" label="Name" value={@s_name} placeholder="Scene name" />
     <.text_input
       name="scene_description"
       label="Description"
+      value={@s_desc}
       placeholder="Scene description"
     />
     <div>
@@ -2651,7 +2826,7 @@ defmodule FateWeb.ActionsLive do
         placeholder="Private prep notes..."
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
         rows="3"
-      />
+      >{@s_notes}</textarea>
     </div>
     """
   end
@@ -2684,10 +2859,11 @@ defmodule FateWeb.ActionsLive do
       end
 
     all_options = scene_opts ++ entity_opts
-    assigns = assign(assigns, :all_options, all_options)
+    prefill_ref = if assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: ""
+    assigns = assigns |> assign(:all_options, all_options) |> assign(:prefill_ref, prefill_ref)
 
     ~H"""
-    <.note_form_fields all_options={@all_options} text="" target_ref="" />
+    <.note_form_fields all_options={@all_options} text="" target_ref={@prefill_ref} />
     """
   end
 
@@ -2767,22 +2943,31 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">{@label}</label>
-      <select
-        name={@name}
-        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
-      >
-        <%= for entity <- @entities do %>
-          <option value={entity.id} selected={entity.id == @selected}>
-            {entity.name} ({entity.kind})
-          </option>
-        <% end %>
-      </select>
+      <%= if @entities == [] do %>
+        <p class="text-sm text-amber-200/40 italic">No entities available</p>
+      <% else %>
+        <select
+          name={@name}
+          class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+        >
+          <option value="">Select...</option>
+          <%= for entity <- @entities do %>
+            <option value={entity.id} selected={entity.id == @selected}>
+              {entity.name} ({entity.kind})
+            </option>
+          <% end %>
+        </select>
+      <% end %>
     </div>
     """
   end
 
   defp text_input(assigns) do
-    assigns = assign_new(assigns, :placeholder, fn -> "" end)
+    assigns =
+      assigns
+      |> assign_new(:placeholder, fn -> "" end)
+      |> assign_new(:value, fn -> nil end)
+      |> assign_new(:required, fn -> false end)
 
     ~H"""
     <div>
@@ -2790,7 +2975,9 @@ defmodule FateWeb.ActionsLive do
       <input
         type="text"
         name={@name}
+        value={@value}
         placeholder={@placeholder}
+        required={@required}
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
       />
     </div>
@@ -2798,6 +2985,8 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp select_input(assigns) do
+    assigns = assign_new(assigns, :selected, fn -> nil end)
+
     ~H"""
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">{@label}</label>
@@ -2806,7 +2995,7 @@ defmodule FateWeb.ActionsLive do
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
       >
         <%= for {value, label} <- @options do %>
-          <option value={value}>{label}</option>
+          <option value={value} selected={value == @selected}>{label}</option>
         <% end %>
       </select>
     </div>
