@@ -2,6 +2,7 @@ defmodule FateWeb.ActionsLive do
   use FateWeb, :live_view
 
   alias Fate.Engine
+  alias Fate.Engine.Replay
 
   @event_type_labels %{
     create_campaign: "Create Campaign",
@@ -55,6 +56,7 @@ defmodule FateWeb.ActionsLive do
         socket
         |> assign(:bookmark_id, nil)
         |> assign(:events, [])
+        |> assign(:invalid_event_ids, MapSet.new())
         |> assign(:state, nil)
         |> assign(:is_gm, identity.is_gm)
         |> assign(:is_observer, identity.is_observer)
@@ -86,6 +88,7 @@ defmodule FateWeb.ActionsLive do
          socket
          |> assign(:bookmark_id, bookmark_id)
          |> assign(:events, events)
+         |> assign(:invalid_event_ids, Replay.validate_chain(events))
          |> assign(:state, state)}
       else
         _ ->
@@ -108,7 +111,8 @@ defmodule FateWeb.ActionsLive do
     {:noreply,
      socket
      |> assign(:state, state)
-     |> assign(:events, events)}
+     |> assign(:events, events)
+     |> assign(:invalid_event_ids, Replay.validate_chain(events))}
   end
 
   def handle_info({:selection_updated, selection}, socket) do
@@ -623,6 +627,44 @@ defmodule FateWeb.ActionsLive do
     end
   end
 
+  def handle_event(
+        "reorder_event",
+        %{"event_id" => event_id, "after_event_id" => after_event_id},
+        socket
+      ) do
+    bookmark_id = socket.assigns.bookmark_id
+    after_id = if after_event_id == "", do: nil, else: after_event_id
+
+    case Fate.Game.Events.reorder(event_id, after_id, bookmark_id) do
+      :ok ->
+        events = load_events_for_role(bookmark_id, socket.assigns.is_gm)
+
+        case Engine.derive_state(bookmark_id) do
+          {:ok, state} ->
+            Phoenix.PubSub.broadcast(
+              Fate.PubSub,
+              "bookmark:#{bookmark_id}",
+              {:state_updated, state}
+            )
+
+            {:noreply,
+             socket
+             |> assign(:events, events)
+             |> assign(:invalid_event_ids, Replay.validate_chain(events))
+             |> assign(:state, state)}
+
+          _ ->
+            {:noreply,
+             socket
+             |> assign(:events, events)
+             |> assign(:invalid_event_ids, Replay.validate_chain(events))}
+        end
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Could not reorder event")}
+    end
+  end
+
   def handle_event("delete_event", %{"id" => event_id}, socket) do
     bookmark_id = socket.assigns.bookmark_id
 
@@ -638,10 +680,17 @@ defmodule FateWeb.ActionsLive do
               {:state_updated, state}
             )
 
-            {:noreply, socket |> assign(:events, events) |> assign(:state, state)}
+            {:noreply,
+             socket
+             |> assign(:events, events)
+             |> assign(:invalid_event_ids, Replay.validate_chain(events))
+             |> assign(:state, state)}
 
           _ ->
-            {:noreply, assign(socket, :events, events)}
+            {:noreply,
+             socket
+             |> assign(:events, events)
+             |> assign(:invalid_event_ids, Replay.validate_chain(events))}
         end
 
       {:error, _reason} ->
@@ -707,7 +756,11 @@ defmodule FateWeb.ActionsLive do
 
         <%= if @log_tab == :events do %>
           <% boundary = bookmark_boundary_index(@events) %>
-          <div class="flex-1 overflow-y-auto p-3 space-y-1" id="event-log">
+          <div
+            class="flex-1 overflow-y-auto p-3 space-y-1"
+            id="event-log"
+            phx-hook={if(@is_gm && !@is_observer, do: "EventReorder")}
+          >
             <%= if @events == [] do %>
               <div class="text-amber-200/30 text-center py-8">No events yet</div>
             <% else %>
@@ -719,6 +772,8 @@ defmodule FateWeb.ActionsLive do
                   state={@state}
                   immutable={real_index <= boundary}
                   is_observer={@is_observer}
+                  is_gm={@is_gm}
+                  invalid={MapSet.member?(@invalid_event_ids, event.id)}
                 />
               <% end %>
             <% end %>
@@ -802,6 +857,7 @@ defmodule FateWeb.ActionsLive do
         <% end %>
       </div>
     </div>
+
     """
   end
 
@@ -810,27 +866,44 @@ defmodule FateWeb.ActionsLive do
   defp event_row(assigns) do
     color = entity_color(assigns.state, assigns.event.actor_id)
     summary = compact_event_summary(assigns.event, assigns.state)
+    draggable = assigns[:is_gm] && !assigns[:immutable] && !assigns[:is_observer]
 
     assigns =
       assigns
       |> assign(:color, color)
       |> assign(:summary, summary)
+      |> assign(:draggable, draggable)
       |> assign_new(:immutable, fn -> false end)
       |> assign_new(:is_observer, fn -> false end)
+      |> assign_new(:is_gm, fn -> false end)
+      |> assign_new(:invalid, fn -> false end)
 
     ~H"""
     <div
       id={"event-#{@index}"}
       class={[
-        "group flex items-center gap-2 px-2 py-1 rounded transition text-sm",
+        "group flex items-center gap-2 px-2 py-1 rounded transition text-sm event-row",
         if(@event.exchange_id, do: "ml-4 border-l-2 border-amber-700/20", else: ""),
-        if(@immutable, do: "opacity-30", else: "hover:bg-amber-900/20")
+        if(@immutable, do: "opacity-30", else: "hover:bg-amber-900/20"),
+        @draggable && "cursor-grab"
       ]}
+      draggable={if(@draggable, do: "true", else: "false")}
+      data-event-id={@event.id}
+      data-event-index={@index}
     >
-      <div
-        class="w-2 h-2 rounded-full shrink-0"
-        style={"background: #{@color};"}
-      />
+      <%= if @invalid do %>
+        <span
+          class="text-amber-500 shrink-0"
+          data-tooltip="This event had no effect — its target is missing at this point in the timeline"
+        >
+          <.icon name="hero-exclamation-triangle" class="w-3.5 h-3.5" />
+        </span>
+      <% else %>
+        <div
+          class="w-2 h-2 rounded-full shrink-0"
+          style={"background: #{@color};"}
+        />
+      <% end %>
       <span class="text-amber-200/40 text-xs shrink-0">{@index + 1}</span>
       <span class="flex-1 text-amber-100/80 truncate" style="font-family: 'Patrick Hand', cursive;">
         {@summary}
@@ -919,6 +992,7 @@ defmodule FateWeb.ActionsLive do
 
       :zone_modify ->
         zone = zone_name(state, detail["zone_id"])
+
         "#{if detail["hidden"] == false, do: "Reveal", else: "Hide"} zone#{if zone, do: " #{zone}"}"
 
       :entity_enter_scene ->

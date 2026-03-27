@@ -26,7 +26,11 @@ if config_env() == :prod do
   host = System.get_env("PHX_HOST") || "localhost"
   port = String.to_integer(System.get_env("PORT") || "4000")
   scheme = System.get_env("PHX_SCHEME") || "https"
-  url_port = String.to_integer(System.get_env("PHX_URL_PORT") || if(scheme == "https", do: "443", else: to_string(port)))
+
+  url_port =
+    String.to_integer(
+      System.get_env("PHX_URL_PORT") || if(scheme == "https", do: "443", else: to_string(port))
+    )
 
   config :fate, FateWeb.Endpoint,
     url: [host: host, port: url_port, scheme: scheme],

@@ -17,6 +17,115 @@ defmodule Fate.Engine.Replay do
   }
 
   @doc """
+  Replays events and returns a MapSet of event IDs whose targets
+  are missing from the state at the point they would be applied.
+  """
+  def validate_chain(events) do
+    {_state, invalid_ids} =
+      Enum.reduce(events, {%DerivedState{}, MapSet.new()}, fn event, {state, invalids} ->
+        invalids =
+          if event_invalid?(event, state),
+            do: MapSet.put(invalids, event.id),
+            else: invalids
+
+        {apply_event(event, state), invalids}
+      end)
+
+    invalid_ids
+  end
+
+  defp event_invalid?(event, state) do
+    detail = event.detail || %{}
+
+    case event.type do
+      type
+      when type in [
+             :entity_modify,
+             :entity_remove,
+             :skill_set,
+             :stunt_add,
+             :stunt_remove,
+             :stress_apply,
+             :stress_clear,
+             :consequence_take,
+             :consequence_recover,
+             :fate_point_spend,
+             :fate_point_earn,
+             :fate_point_refresh,
+             :mook_eliminate,
+             :concede,
+             :taken_out
+           ] ->
+        entity_id = event.target_id || event.actor_id || detail["entity_id"]
+        entity_id != nil and not Map.has_key?(state.entities, entity_id)
+
+      :entity_move ->
+        entity_id = event.actor_id || detail["entity_id"]
+        entity_id != nil and not Map.has_key?(state.entities, entity_id)
+
+      :entity_enter_scene ->
+        entity_id = event.actor_id || detail["entity_id"]
+        entity_id != nil and not Map.has_key?(state.entities, entity_id)
+
+      :aspect_create ->
+        target_type = detail["target_type"] || "entity"
+        target_id = event.target_id || detail["target_id"]
+        target_missing?(state, target_type, target_id)
+
+      :aspect_compel ->
+        entity_id = event.target_id
+        entity_id != nil and not Map.has_key?(state.entities, entity_id)
+
+      :scene_end ->
+        scene_id = detail["scene_id"]
+        scene_id != nil and not Enum.any?(state.scenes, &(&1.id == scene_id))
+
+      :scene_modify ->
+        scene_id = detail["scene_id"]
+        scene_id != nil and not Enum.any?(state.scenes, &(&1.id == scene_id))
+
+      :zone_create ->
+        scene_id = detail["scene_id"]
+        scene_id != nil and not Enum.any?(state.scenes, &(&1.id == scene_id))
+
+      :zone_modify ->
+        zone_id = detail["zone_id"]
+        zone_id != nil and not zone_exists?(state, zone_id)
+
+      :redirect_hit ->
+        from_id = event.actor_id || detail["from_entity_id"]
+        to_id = event.target_id || detail["to_entity_id"]
+
+        (from_id != nil and not Map.has_key?(state.entities, from_id)) or
+          (to_id != nil and not Map.has_key?(state.entities, to_id))
+
+      :shifts_resolved ->
+        target_id = event.target_id
+        target_id != nil and not Map.has_key?(state.entities, target_id)
+
+      _ ->
+        false
+    end
+  end
+
+  defp target_missing?(state, "entity", id),
+    do: id != nil and not Map.has_key?(state.entities, id)
+
+  defp target_missing?(state, "scene", id),
+    do: id != nil and not Enum.any?(state.scenes, &(&1.id == id))
+
+  defp target_missing?(state, "zone", id),
+    do: id != nil and not zone_exists?(state, id)
+
+  defp target_missing?(_, _, _), do: false
+
+  defp zone_exists?(state, zone_id) do
+    Enum.any?(state.scenes, fn scene ->
+      Enum.any?(scene.zones, &(&1.id == zone_id))
+    end)
+  end
+
+  @doc """
   Given a branch ID, head event ID, and an ordered list of events (root first),
   produces the derived game state.
   """

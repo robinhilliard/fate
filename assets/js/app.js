@@ -129,6 +129,95 @@ const ZoneDropTarget = {
   }
 }
 
+const EventReorder = {
+  mounted() {
+    this._draggingId = null
+    this._dropTarget = null
+
+    this.el.addEventListener("dragstart", (e) => {
+      const row = e.target.closest("[data-event-id]")
+      if (!row || row.getAttribute("draggable") !== "true") { e.preventDefault(); return }
+      e.dataTransfer.effectAllowed = "move"
+      e.dataTransfer.setData("application/x-event-id", row.dataset.eventId)
+      row.style.opacity = "0.3"
+      this._draggingId = row.dataset.eventId
+    })
+
+    this.el.addEventListener("dragend", (e) => {
+      this.el.querySelectorAll("[data-event-id]").forEach(r => r.style.opacity = "")
+      this._clearIndicator()
+      this._draggingId = null
+      this._dropTarget = null
+    })
+
+    this.el.addEventListener("dragover", (e) => {
+      if (!this._draggingId) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = "move"
+
+      const row = e.target.closest("[data-event-id]")
+      if (!row || row.dataset.eventId === this._draggingId) {
+        this._clearIndicator()
+        return
+      }
+
+      const rect = row.getBoundingClientRect()
+      const midY = rect.top + rect.height / 2
+      const position = e.clientY < midY ? "before" : "after"
+
+      this._showIndicator(row, position)
+      this._dropTarget = { eventId: row.dataset.eventId, position }
+    })
+
+    this.el.addEventListener("drop", (e) => {
+      e.preventDefault()
+      if (!this._draggingId || !this._dropTarget) return
+
+      const rows = Array.from(this.el.querySelectorAll("[data-event-id]"))
+      const targetRow = rows.find(r => r.dataset.eventId === this._dropTarget.eventId)
+      if (!targetRow) return
+
+      const targetIdx = rows.indexOf(targetRow)
+      let afterEventId
+
+      if (this._dropTarget.position === "before") {
+        afterEventId = this._dropTarget.eventId
+      } else {
+        const earlierRow = rows[targetIdx + 1]
+        afterEventId = earlierRow ? earlierRow.dataset.eventId : ""
+      }
+
+      this.pushEvent("reorder_event", {
+        event_id: this._draggingId,
+        after_event_id: afterEventId
+      })
+
+      this._clearIndicator()
+      this._dropTarget = null
+      this._draggingId = null
+    })
+  },
+
+  _showIndicator(row, position) {
+    let indicator = this.el.querySelector(".event-drop-indicator")
+    if (!indicator) {
+      indicator = document.createElement("div")
+      indicator.className = "event-drop-indicator"
+      indicator.style.cssText = "height:3px;background:#f59e0b;border-radius:2px;margin:1px 8px;pointer-events:none;"
+    }
+    if (position === "before") {
+      row.parentNode.insertBefore(indicator, row)
+    } else {
+      row.parentNode.insertBefore(indicator, row.nextSibling)
+    }
+  },
+
+  _clearIndicator() {
+    const ind = this.el.querySelector(".event-drop-indicator")
+    if (ind) ind.remove()
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -138,7 +227,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     participant_name: localStorage.getItem("fate_name"),
     participant_role: localStorage.getItem("fate_role"),
   }),
-  hooks: {...colocatedHooks, SpringLayout, DraggableEntity, DropTarget, DraggableToken, ZoneDropTarget},
+  hooks: {...colocatedHooks, SpringLayout, DraggableEntity, DropTarget, DraggableToken, ZoneDropTarget, EventReorder},
 })
 
 // Show progress bar on live navigation and form submits

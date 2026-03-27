@@ -221,7 +221,10 @@ defmodule FateWeb.TableComponents do
               <div class="flex gap-2 mt-1">
                 <%= for track <- @entity.stress_tracks do %>
                   <div class="flex items-center gap-0.5">
-                    <span class="text-gray-400 text-xs font-bold uppercase" style="font-size: 0.55rem;">
+                    <span
+                      class="text-gray-400 text-xs font-bold uppercase"
+                      style="font-size: 0.55rem;"
+                    >
                       {String.first(track.label)}
                     </span>
                     <%= for i <- 1..track.boxes do %>
@@ -234,7 +237,8 @@ defmodule FateWeb.TableComponents do
                           "w-4 h-4 border rounded text-center leading-4 cursor-pointer transition-all",
                           if(i in track.checked,
                             do: "bg-red-500 border-red-600 text-white",
-                            else: "border-gray-400 text-gray-400 hover:bg-red-100 hover:border-red-300"
+                            else:
+                              "border-gray-400 text-gray-400 hover:bg-red-100 hover:border-red-300"
                           )
                         ]}
                         style="font-size: 0.55rem;"

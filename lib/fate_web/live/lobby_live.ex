@@ -356,7 +356,8 @@ defmodule FateWeb.LobbyLive do
                detail: %{
                  "scene_id" => Ash.UUID.generate(),
                  "name" => "No Scene",
-                 "description" => "Add or switch to another scene using the button on the scene notes card",
+                 "description" =>
+                   "Add or switch to another scene using the button on the scene notes card",
                  "gm_notes" => nil
                }
              },
