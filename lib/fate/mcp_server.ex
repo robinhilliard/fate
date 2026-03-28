@@ -612,7 +612,7 @@ defmodule Fate.McpServer do
       %{
         name: "search_notes",
         description:
-          "Search notes in the game timeline. Returns matching notes with their text, target, and timestamp. Use to find clues, character quotes, narrative moments, inventory changes, etc.",
+          "Search notes in the current bookmark's timeline (not parent bookmarks). Returns matching notes with their text, target, and timestamp. Use to find clues, character quotes, narrative moments, inventory changes, etc.",
         input_schema: %{
           type: "object",
           properties: %{
@@ -624,6 +624,30 @@ defmodule Fate.McpServer do
             target_id: %{
               type: "string",
               description: "Optional: filter to notes attached to this entity/scene/zone ID"
+            }
+          }
+        }
+      },
+      %{
+        name: "summarise_timeline",
+        description: """
+        Summarise the events in the current bookmark's timeline (since the last bookmark boundary — never include events from parent bookmarks).
+
+        The style of summary depends on how the user asks:
+
+        - If asked for "the story so far", "what happened in the narrative", "recap the adventure", or similar IN-WORLD requests: write the summary as if narrating a work of fiction. Use character names (not player names), describe actions dramatically, weave in notes and aspect descriptions as narrative colour. Do not mention game mechanics (dice rolls, fate points, stress boxes).
+
+        - If asked about "the game", "what happened last session", "what did we do", or any question that BREAKS THE FOURTH WALL (e.g. mentioning player names, asking about mechanics): include game mechanics in the summary — mention dice results, fate point spends, consequences taken, stress applied, etc. alongside the narrative.
+
+        Use notes (type: note) as primary sources for narrative detail — they contain character quotes, clues, memorable moments, and GM observations. Other events provide the mechanical backbone.
+        """,
+        input_schema: %{
+          type: "object",
+          properties: %{
+            style: %{
+              type: "string",
+              description:
+                "Optional: 'narrative' for in-world fiction style, 'game' for mechanics-included style. If omitted, infer from the user's question."
             }
           }
         }
@@ -704,9 +728,7 @@ defmodule Fate.McpServer do
   def handle_call_tool("get_action_log", args, state) do
     limit = args["limit"] || 20
 
-    with {:ok, bm} <- Ash.get(Fate.Game.Bookmark, state.bookmark_id, not_found_error?: false),
-         bm when bm != nil <- bm,
-         {:ok, events} <- Engine.load_event_chain(bm.head_event_id) do
+    with {:ok, events} <- Engine.load_player_events(state.bookmark_id) do
       recent = events |> Enum.take(-limit) |> Enum.map(&event_summary/1)
       {:ok, [%{type: "text", text: Jason.encode!(recent, pretty: true)}], state}
     else
@@ -1458,9 +1480,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("search_notes", args, state) do
-    with {:ok, bookmark} when bookmark != nil <-
-           Ash.get(Fate.Game.Bookmark, state.bookmark_id, not_found_error?: false),
-         {:ok, events} <- Engine.load_event_chain(bookmark.head_event_id) do
+    with {:ok, events} <- Engine.load_player_events(state.bookmark_id) do
       query = args["query"]
       target_id = args["target_id"]
       query_lower = query && String.downcase(query)
@@ -1495,6 +1515,48 @@ defmodule Fate.McpServer do
       {:ok, [%{type: "text", text: "Found #{length(notes)} notes:\n#{result}"}], state}
     else
       _ -> {:ok, [%{type: "text", text: "No notes found (bookmark not loaded)"}], state}
+    end
+  end
+
+  def handle_call_tool("summarise_timeline", args, state) do
+    style = args["style"] || "narrative"
+
+    with {:ok, events} <- Engine.load_player_events(state.bookmark_id),
+         {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
+      event_summaries = Enum.map(events, &event_summary/1)
+
+      notes =
+        events
+        |> Enum.filter(&(&1.type == :note))
+        |> Enum.map(fn e ->
+          %{
+            text: get_in(e.detail, ["text"]) || e.description,
+            target_id: e.target_id,
+            timestamp: e.timestamp
+          }
+        end)
+
+      entity_names =
+        derived.entities
+        |> Map.values()
+        |> Enum.map(fn e -> %{name: e.name, kind: e.kind} end)
+
+      scene_names =
+        derived.scenes
+        |> Enum.map(fn s -> %{name: s.name, status: s.status} end)
+
+      payload = %{
+        style: style,
+        total_events: length(events),
+        events: event_summaries,
+        notes: notes,
+        entities: entity_names,
+        scenes: scene_names
+      }
+
+      {:ok, [%{type: "text", text: Jason.encode!(payload, pretty: true)}], state}
+    else
+      _ -> {:error, %{code: -32000, message: "Failed to load timeline"}, state}
     end
   end
 

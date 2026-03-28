@@ -1182,6 +1182,16 @@ defmodule FateWeb.TableLive do
         description: "Hide #{entity.name}",
         detail: %{"entity_id" => entity_id, "hidden" => true}
       })
+
+      Enum.each(entity.aspects, fn aspect ->
+        unless aspect.hidden do
+          Fate.Engine.append_event(branch_id, %{
+            type: :aspect_modify,
+            description: "Hide #{entity.name}: #{aspect.description}",
+            detail: %{"aspect_id" => aspect.id, "hidden" => true}
+          })
+        end
+      end)
     end
   end
 
