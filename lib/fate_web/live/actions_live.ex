@@ -81,6 +81,7 @@ defmodule FateWeb.ActionsLive do
         |> assign(:modal, nil)
         |> assign(:form_data, %{})
         |> assign(:prefill_entity_id, nil)
+        |> assign(:bookmarks, [])
 
       {:ok, socket}
     end
@@ -103,7 +104,8 @@ defmodule FateWeb.ActionsLive do
          |> assign(:events, events)
          |> assign(:invalid_event_ids, Replay.validate_chain(events))
          |> assign(:participants, participants)
-         |> assign(:state, state)}
+         |> assign(:state, state)
+         |> assign(:bookmarks, load_active_bookmarks())}
       else
         _ ->
           {:noreply,
@@ -970,7 +972,7 @@ defmodule FateWeb.ActionsLive do
           </div>
         <% else %>
           <div class="flex-1 overflow-y-auto p-3" id="bookmark-tree">
-            <.bookmark_tree bookmark_id={@bookmark_id} />
+            <.bookmark_tree bookmark_id={@bookmark_id} bookmarks={@bookmarks} />
           </div>
         <% end %>
       </div>
@@ -2059,6 +2061,19 @@ defmodule FateWeb.ActionsLive do
     end)
   end
 
+  defp load_active_bookmarks do
+    require Ash.Query
+
+    case Ash.read(
+           Fate.Game.Bookmark
+           |> Ash.Query.filter(status: :active)
+           |> Ash.Query.sort(created_at: :asc)
+         ) do
+      {:ok, bms} -> bms
+      _ -> []
+    end
+  end
+
   defp load_events_for_role(bookmark_id, true = _is_gm) do
     case Ash.get(Fate.Game.Bookmark, bookmark_id, not_found_error?: false) do
       {:ok, %{head_event_id: head_id}} when head_id != nil ->
@@ -2104,18 +2119,7 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp bookmark_tree(assigns) do
-    require Ash.Query
-
-    bookmarks =
-      case Ash.read(
-             Fate.Game.Bookmark
-             |> Ash.Query.filter(status: :active)
-             |> Ash.Query.sort(created_at: :asc)
-           ) do
-        {:ok, bms} -> bms
-        _ -> []
-      end
-
+    bookmarks = assigns.bookmarks
     top_level = Enum.filter(bookmarks, &is_nil(&1.parent_bookmark_id))
     children_map = Enum.group_by(bookmarks, & &1.parent_bookmark_id)
 
