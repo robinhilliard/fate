@@ -49,7 +49,8 @@ defmodule FateWeb.TableLive do
            |> assign(:bookmark_id, bookmark_id)
            |> assign(:state, state)
            |> assign(:participants, participants)
-           |> assign(:current_scene_id, current_scene && current_scene.id)}
+           |> assign(:current_scene_id, current_scene && current_scene.id)
+           |> push_event("splash_dismiss", %{})}
 
         {:error, _reason} ->
           {:noreply, put_flash(socket, :error, "Could not load bookmark")}
@@ -664,25 +665,21 @@ defmodule FateWeb.TableLive do
       data-scene-key={@bookmark_id || "default"}
       data-scene-id={@current_scene_id || "none"}
     >
-      <%= if @state == nil do %>
-        <div class="flex items-center justify-center h-full">
-          <div class="text-center">
-            <h1
-              class="text-4xl font-bold text-amber-100 mb-4"
-              style="font-family: 'Permanent Marker', cursive;"
-            >
-              Fateble
-            </h1>
-            <p class="text-amber-200/70 mb-8">No branch loaded. Select a branch to begin.</p>
-            <.link
-              navigate={~p"/branches"}
-              class="px-6 py-3 bg-amber-700 text-amber-100 rounded-lg hover:bg-amber-600 transition"
-            >
-              Browse Branches
-            </.link>
-          </div>
-        </div>
-      <% else %>
+      <div
+        id="splash"
+        class="absolute inset-0 z-[100] flex items-center justify-center"
+        style="background: #1a3a1a url('/images/felt.png') repeat; background-size: 512px 512px;"
+        phx-hook=".Splash"
+        phx-update="ignore"
+      >
+        <img
+          src={~p"/images/fateble_logo.png"}
+          alt="Fateble"
+          class="w-48 h-48 object-contain drop-shadow-2xl"
+        />
+      </div>
+
+      <%= if @state do %>
         <%!-- Window switcher + note button (hidden for observers) --%>
         <%= unless @is_observer do %>
           <div class="absolute bottom-3 right-3 z-50 flex gap-2">
@@ -1049,6 +1046,23 @@ defmodule FateWeb.TableLive do
       </script>
 
       <%!-- .RingTrigger hook is defined in TableComponents.entity_card --%>
+
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".Splash">
+        export default {
+          mounted() {
+            this._mountedAt = Date.now()
+            this.handleEvent("splash_dismiss", () => {
+              const elapsed = Date.now() - this._mountedAt
+              const wait = Math.max(0, 1000 - elapsed)
+              setTimeout(() => {
+                this.el.style.transition = "opacity 1s ease-out"
+                this.el.style.opacity = "0"
+                this.el.addEventListener("transitionend", () => this.el.remove(), {once: true})
+              }, wait)
+            })
+          }
+        }
+      </script>
     </div>
     """
   end

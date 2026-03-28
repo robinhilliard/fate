@@ -60,7 +60,8 @@ defmodule FateWeb.ActionsLive do
          |> assign(:invalid_event_ids, Replay.validate_chain(events))
          |> assign(:participants, participants)
          |> assign(:state, state)
-         |> assign(:bookmarks, load_active_bookmarks())}
+         |> assign(:bookmarks, load_active_bookmarks())
+         |> push_event("splash_dismiss", %{})}
       else
         _ ->
           {:noreply,
@@ -835,6 +836,20 @@ defmodule FateWeb.ActionsLive do
   def render(assigns) do
     ~H"""
     <div class="flex h-screen relative" style="background: #1a1410; color: #e8dcc8;">
+      <div
+        id="splash"
+        class="absolute inset-0 z-[100] flex items-center justify-center"
+        style="background: #1a1410;"
+        phx-hook=".Splash"
+        phx-update="ignore"
+      >
+        <img
+          src={~p"/images/fateble_logo.png"}
+          alt="Fateble"
+          class="w-48 h-48 object-contain drop-shadow-2xl"
+        />
+      </div>
+
       <%!-- Window switcher --%>
       <a
         href={~p"/table/#{@bookmark_id || ""}"}
@@ -996,6 +1011,23 @@ defmodule FateWeb.ActionsLive do
           </div>
         <% end %>
       </div>
+
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".Splash">
+        export default {
+          mounted() {
+            this._mountedAt = Date.now()
+            this.handleEvent("splash_dismiss", () => {
+              const elapsed = Date.now() - this._mountedAt
+              const wait = Math.max(0, 1000 - elapsed)
+              setTimeout(() => {
+                this.el.style.transition = "opacity 1s ease-out"
+                this.el.style.opacity = "0"
+                this.el.addEventListener("transitionend", () => this.el.remove(), {once: true})
+              }, wait)
+            })
+          }
+        }
+      </script>
     </div>
     """
   end

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/fateble_logo.png" alt="Fateble" width="200">
+  <img src="priv/static/images/fateble_logo.png" alt="Fateble" width="200">
 </p>
 
 # Fateble
