@@ -37,6 +37,7 @@ defmodule FateWeb.ActionsLive do
         |> assign(:form_data, %{})
         |> assign(:prefill_entity_id, nil)
         |> assign(:bookmarks, [])
+        |> assign(:splash_visible, true)
 
       {:ok, socket}
     end
@@ -96,6 +97,10 @@ defmodule FateWeb.ActionsLive do
      socket
      |> assign(:building, building)
      |> assign(:build_steps, build_steps)}
+  end
+
+  def handle_event("splash_done", _params, socket) do
+    {:noreply, assign(socket, :splash_visible, false)}
   end
 
   def handle_event("fork_bookmark", %{"bookmark-id" => bookmark_id}, socket) do
@@ -836,19 +841,21 @@ defmodule FateWeb.ActionsLive do
   def render(assigns) do
     ~H"""
     <div class="flex h-screen relative" style="background: #1a1410; color: #e8dcc8;">
-      <div
-        id="splash"
-        class="absolute inset-0 z-[100] flex items-center justify-center"
-        style="background: #1a1410;"
-        phx-hook=".Splash"
-        phx-update="ignore"
-      >
-        <img
-          src={~p"/images/fateble_logo.png"}
-          alt="Fateble"
-          class="w-48 h-48 object-contain drop-shadow-2xl"
-        />
-      </div>
+      <%= if @splash_visible do %>
+        <div
+          id="splash"
+          class="absolute inset-0 z-[100] flex items-center justify-center"
+          style="background: #1a1410;"
+          phx-hook=".Splash"
+          phx-update="ignore"
+        >
+          <img
+            src={~p"/images/fateble_logo.png"}
+            alt="Fateble"
+            class="w-48 h-48 object-contain drop-shadow-2xl"
+          />
+        </div>
+      <% end %>
 
       <%!-- Window switcher --%>
       <a
@@ -1022,7 +1029,9 @@ defmodule FateWeb.ActionsLive do
               setTimeout(() => {
                 this.el.style.transition = "opacity 1s ease-out"
                 this.el.style.opacity = "0"
-                this.el.addEventListener("transitionend", () => this.el.remove(), {once: true})
+                this.el.addEventListener("transitionend", () => {
+                  this.pushEvent("splash_done", {})
+                }, {once: true})
               }, wait)
             })
           }

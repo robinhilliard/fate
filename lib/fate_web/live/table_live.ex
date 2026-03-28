@@ -28,6 +28,7 @@ defmodule FateWeb.TableLive do
         |> assign(:expanded_entities, MapSet.new())
         |> assign(:current_scene_id, nil)
         |> assign(:table_modal, nil)
+        |> assign(:splash_visible, true)
 
       {:ok, socket}
     end
@@ -74,6 +75,10 @@ defmodule FateWeb.TableLive do
   end
 
   @impl true
+  def handle_event("splash_done", _params, socket) do
+    {:noreply, assign(socket, :splash_visible, false)}
+  end
+
   def handle_event("set_dock", %{"position" => position}, socket) do
     position = String.to_existing_atom(position)
     {:noreply, assign(socket, :dock_position, position)}
@@ -665,19 +670,21 @@ defmodule FateWeb.TableLive do
       data-scene-key={@bookmark_id || "default"}
       data-scene-id={@current_scene_id || "none"}
     >
-      <div
-        id="splash"
-        class="absolute inset-0 z-[100] flex items-center justify-center"
-        style="background: #1a3a1a url('/images/felt.png') repeat; background-size: 512px 512px;"
-        phx-hook=".Splash"
-        phx-update="ignore"
-      >
-        <img
-          src={~p"/images/fateble_logo.png"}
-          alt="Fateble"
-          class="w-48 h-48 object-contain drop-shadow-2xl"
-        />
-      </div>
+      <%= if @splash_visible do %>
+        <div
+          id="splash"
+          class="absolute inset-0 z-[100] flex items-center justify-center"
+          style="background: #1a3a1a url('/images/felt.png') repeat; background-size: 512px 512px;"
+          phx-hook=".Splash"
+          phx-update="ignore"
+        >
+          <img
+            src={~p"/images/fateble_logo.png"}
+            alt="Fateble"
+            class="w-48 h-48 object-contain drop-shadow-2xl"
+          />
+        </div>
+      <% end %>
 
       <%= if @state do %>
         <%!-- Window switcher + note button (hidden for observers) --%>
@@ -1057,7 +1064,9 @@ defmodule FateWeb.TableLive do
               setTimeout(() => {
                 this.el.style.transition = "opacity 1s ease-out"
                 this.el.style.opacity = "0"
-                this.el.addEventListener("transitionend", () => this.el.remove(), {once: true})
+                this.el.addEventListener("transitionend", () => {
+                  this.pushEvent("splash_done", {})
+                }, {once: true})
               }, wait)
             })
           }
