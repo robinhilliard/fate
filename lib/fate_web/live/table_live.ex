@@ -516,10 +516,11 @@ defmodule FateWeb.TableLive do
     aspect = find_scene_aspect(socket.assigns.state, aspect_id)
 
     if aspect do
-      scene = Enum.find(socket.assigns.state.scenes, fn s ->
-        Enum.any?(s.aspects, &(&1.id == aspect_id)) ||
-          Enum.any?(s.zones, fn z -> Enum.any?(z.aspects, &(&1.id == aspect_id)) end)
-      end)
+      scene =
+        Enum.find(socket.assigns.state.scenes, fn s ->
+          Enum.any?(s.aspects, &(&1.id == aspect_id)) ||
+            Enum.any?(s.zones, fn z -> Enum.any?(z.aspects, &(&1.id == aspect_id)) end)
+        end)
 
       parent_name = if scene, do: scene.name, else: "scene"
       action = if aspect.hidden, do: "Reveal", else: "Hide"
@@ -635,7 +636,11 @@ defmodule FateWeb.TableLive do
 
             detail =
               %{"text" => text}
-              |> then(fn d -> if target_id, do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}), else: d end)
+              |> then(fn d ->
+                if target_id,
+                  do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}),
+                  else: d
+              end)
 
             Fate.Engine.append_event(socket.assigns.bookmark_id, %{
               type: :note,

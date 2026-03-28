@@ -165,7 +165,9 @@ defmodule FateWeb.TableComponents do
                     phx-value-aspect-id={aspect.id}
                     phx-value-entity-id={@entity.id}
                     class="px-1 py-0.5 bg-gray-600/80 hover:bg-gray-500 text-white rounded text-xs leading-none transition"
-                    data-tooltip={if(aspect.hidden, do: "Reveal to players", else: "Hide from players")}
+                    data-tooltip={
+                      if(aspect.hidden, do: "Reveal to players", else: "Hide from players")
+                    }
                   >
                     <.icon
                       name={if(aspect.hidden, do: "hero-eye", else: "hero-eye-slash")}

@@ -639,8 +639,7 @@ defmodule Fate.McpServer do
             skill: %{type: "string", description: "The skill being used (e.g. Fight, Notice)"},
             action: %{
               type: "string",
-              description:
-                "The action type: attack, defend, overcome, create_advantage"
+              description: "The action type: attack, defend, overcome, create_advantage"
             },
             difficulty: %{
               type: "integer",
@@ -1355,7 +1354,9 @@ defmodule Fate.McpServer do
             nil -> "entity"
             e -> e.name
           end
-        _ -> "entity"
+
+        _ ->
+          "entity"
       end
 
     Engine.append_event(state.bookmark_id, %{
@@ -1573,7 +1574,11 @@ defmodule Fate.McpServer do
     end
   end
 
-  def handle_call_tool("roll_dice", %{"entity_id" => entity_id, "skill" => skill, "action" => action} = args, state) do
+  def handle_call_tool(
+        "roll_dice",
+        %{"entity_id" => entity_id, "skill" => skill, "action" => action} = args,
+        state
+      ) do
     with {:ok, derived} <- Engine.derive_state(state.bookmark_id),
          entity when entity != nil <- Map.get(derived.entities, entity_id) do
       dice = for _ <- 1..4, do: Enum.random([-1, 0, 1])
@@ -1590,9 +1595,16 @@ defmodule Fate.McpServer do
           _ -> :roll_overcome
         end
 
-      dice_display = Enum.map(dice, fn -1 -> "-"; 0 -> "0"; 1 -> "+" end) |> Enum.join()
+      dice_display =
+        Enum.map(dice, fn
+          -1 -> "-"
+          0 -> "0"
+          1 -> "+"
+        end)
+        |> Enum.join()
 
-      description = "#{entity.name} rolls #{skill} [#{dice_display}] = #{if total >= 0, do: "+"}#{total}"
+      description =
+        "#{entity.name} rolls #{skill} [#{dice_display}] = #{if total >= 0, do: "+"}#{total}"
 
       detail = %{
         "entity_id" => entity_id,
@@ -1602,7 +1614,8 @@ defmodule Fate.McpServer do
         "raw_total" => total
       }
 
-      detail = if args["difficulty"], do: Map.put(detail, "difficulty", args["difficulty"]), else: detail
+      detail =
+        if args["difficulty"], do: Map.put(detail, "difficulty", args["difficulty"]), else: detail
 
       Engine.append_event(state.bookmark_id, %{
         type: event_type,
@@ -1625,12 +1638,15 @@ defmodule Fate.McpServer do
       result =
         if args["difficulty"] do
           shifts = total - args["difficulty"]
-          outcome = cond do
-            shifts >= 3 -> "succeed_with_style"
-            shifts > 0 -> "succeed"
-            shifts == 0 -> "tie"
-            true -> "fail"
-          end
+
+          outcome =
+            cond do
+              shifts >= 3 -> "succeed_with_style"
+              shifts > 0 -> "succeed"
+              shifts == 0 -> "tie"
+              true -> "fail"
+            end
+
           Map.merge(result, %{difficulty: args["difficulty"], shifts: shifts, outcome: outcome})
         else
           result

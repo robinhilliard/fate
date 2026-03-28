@@ -25,7 +25,6 @@ defmodule FateWeb.Router do
 
   scope "/api" do
     pipe_through :api
-
   end
 
   scope "/api" do

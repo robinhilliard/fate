@@ -43,7 +43,8 @@ defmodule FateWeb.Endpoint do
   defp maybe_parse_body(%Plug.Conn{path_info: ["api", "mcp" | _]} = conn, _opts), do: conn
 
   defp maybe_parse_body(conn, _opts) do
-    Plug.Parsers.call(conn,
+    Plug.Parsers.call(
+      conn,
       Plug.Parsers.init(
         parsers: [:urlencoded, :multipart, :json],
         pass: ["*/*"],

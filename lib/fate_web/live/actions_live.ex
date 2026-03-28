@@ -46,6 +46,16 @@ defmodule FateWeb.ActionsLive do
 
   @roll_types ~w(roll_attack roll_defend roll_overcome roll_create_advantage)a
 
+  @editable_types ~w(aspect_create aspect_compel entity_move scene_start scene_modify
+    entity_create entity_modify skill_set stunt_add stunt_remove set_system
+    fate_point_spend fate_point_earn fate_point_refresh note)a
+
+  defp editable_type?(type), do: type in @editable_types
+
+  defp modal_for_event_type(:entity_modify), do: "entity_edit"
+  defp modal_for_event_type(:note), do: "edit_note"
+  defp modal_for_event_type(type), do: Atom.to_string(type)
+
   @impl true
   def mount(_params, _session, socket) do
     identity = FateWeb.Helpers.identify(socket)
@@ -414,27 +424,32 @@ defmodule FateWeb.ActionsLive do
     end
   end
 
-  def handle_event("edit_note", %{"id" => event_id}, socket) do
-    event =
-      Enum.find(socket.assigns.events, &(&1.id == event_id))
+  def handle_event("edit_event", %{"id" => event_id}, socket) do
+    event = Enum.find(socket.assigns.events, &(&1.id == event_id))
 
-    if event && event.type == :note do
-      detail = event.detail || %{}
+    if event && editable_type?(event.type) do
+      form_data = build_edit_form_data(event)
+      modal = modal_for_event_type(event.type)
 
-      target_ref =
-        case {detail["target_type"], event.target_id} do
-          {type, id} when type != nil and id != nil -> "#{type}:#{id}"
-          _ -> ""
+      prefill_entity_id =
+        case event.type do
+          t when t in ~w(entity_modify skill_set stunt_add stunt_remove
+            fate_point_spend fate_point_earn fate_point_refresh entity_move)a ->
+            form_data["entity_id"]
+
+          :aspect_create ->
+            detail = event.detail || %{}
+            if detail["target_type"] == "entity", do: detail["target_id"] || event.target_id
+
+          _ ->
+            socket.assigns.prefill_entity_id
         end
 
       {:noreply,
        socket
-       |> assign(:modal, "edit_note")
-       |> assign(:form_data, %{
-         "event_id" => event_id,
-         "text" => detail["text"] || event.description || "",
-         "target_ref" => target_ref
-       })}
+       |> assign(:modal, modal)
+       |> assign(:form_data, form_data)
+       |> assign(:prefill_entity_id, prefill_entity_id)}
     else
       {:noreply, socket}
     end
@@ -447,7 +462,9 @@ defmodule FateWeb.ActionsLive do
   def handle_event("modal_form_changed", params, socket) do
     socket =
       case socket.assigns.modal do
-        modal when modal in ["entity_edit", "skill_set", "stunt_add", "stunt_remove"] ->
+        modal
+        when modal in ~w(entity_edit skill_set stunt_add stunt_remove entity_move
+          fate_point_spend fate_point_earn fate_point_refresh) ->
           if params["entity_id"] && params["entity_id"] != "" do
             assign(socket, :prefill_entity_id, params["entity_id"])
           else
@@ -473,18 +490,22 @@ defmodule FateWeb.ActionsLive do
               _ -> {"entity", params["target_id"]}
             end
 
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :aspect_create,
-            target_id: target_id,
-            description: "Add aspect: #{params["description"]}",
-            detail: %{
-              "target_id" => target_id,
-              "target_type" => target_type,
-              "description" => params["description"],
-              "role" => params["role"] || "additional",
-              "hidden" => params["hidden"] == "true"
-            }
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :aspect_create,
+              target_id: target_id,
+              description: "Add aspect: #{params["description"]}",
+              detail: %{
+                "target_id" => target_id,
+                "target_type" => target_type,
+                "description" => params["description"],
+                "role" => params["role"] || "additional",
+                "hidden" => params["hidden"] == "true"
+              }
+            },
+            socket
+          )
 
         "aspect_compel" ->
           target_entity =
@@ -494,17 +515,21 @@ defmodule FateWeb.ActionsLive do
 
           target_name = if target_entity, do: target_entity.name, else: "entity"
 
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :aspect_compel,
-            actor_id: params["actor_id"],
-            target_id: params["target_id"],
-            description: "Compel #{target_name}: #{params["description"]}",
-            detail: %{
-              "aspect_id" => params["aspect_id"],
-              "description" => params["description"],
-              "accepted" => params["accepted"] != "false"
-            }
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :aspect_compel,
+              actor_id: params["actor_id"],
+              target_id: params["target_id"],
+              description: "Compel #{target_name}: #{params["description"]}",
+              detail: %{
+                "aspect_id" => params["aspect_id"],
+                "description" => params["description"],
+                "accepted" => params["accepted"] != "false"
+              }
+            },
+            socket
+          )
 
         "entity_move" ->
           zone_name =
@@ -520,24 +545,32 @@ defmodule FateWeb.ActionsLive do
               "zone"
             end
 
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :entity_move,
-            actor_id: params["entity_id"],
-            description: "Move to #{zone_name}",
-            detail: %{"entity_id" => params["entity_id"], "zone_id" => params["zone_id"]}
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :entity_move,
+              actor_id: params["entity_id"],
+              description: "Move to #{zone_name}",
+              detail: %{"entity_id" => params["entity_id"], "zone_id" => params["zone_id"]}
+            },
+            socket
+          )
 
         "scene_start" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :scene_start,
-            description: "Start scene: #{params["name"]}",
-            detail: %{
-              "scene_id" => Ash.UUID.generate(),
-              "name" => params["name"],
-              "description" => params["scene_description"],
-              "gm_notes" => params["gm_notes"]
-            }
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :scene_start,
+              description: "Start scene: #{params["name"]}",
+              detail: %{
+                "scene_id" => params["scene_id"] || Ash.UUID.generate(),
+                "name" => params["name"],
+                "description" => params["scene_description"],
+                "gm_notes" => params["gm_notes"]
+              }
+            },
+            socket
+          )
 
         "scene_end" ->
           active = socket.assigns.state.scenes |> Enum.find(&(&1.status == :active))
@@ -553,28 +586,40 @@ defmodule FateWeb.ActionsLive do
           end
 
         "fate_point_spend" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :fate_point_spend,
-            target_id: params["entity_id"],
-            description: "Spend fate point",
-            detail: %{"entity_id" => params["entity_id"], "amount" => 1}
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :fate_point_spend,
+              target_id: params["entity_id"],
+              description: "Spend fate point",
+              detail: %{"entity_id" => params["entity_id"], "amount" => 1}
+            },
+            socket
+          )
 
         "fate_point_earn" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :fate_point_earn,
-            target_id: params["entity_id"],
-            description: "Earn fate point",
-            detail: %{"entity_id" => params["entity_id"], "amount" => 1}
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :fate_point_earn,
+              target_id: params["entity_id"],
+              description: "Earn fate point",
+              detail: %{"entity_id" => params["entity_id"], "amount" => 1}
+            },
+            socket
+          )
 
         "fate_point_refresh" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :fate_point_refresh,
-            target_id: params["entity_id"],
-            description: "Refresh fate points",
-            detail: %{"entity_id" => params["entity_id"]}
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :fate_point_refresh,
+              target_id: params["entity_id"],
+              description: "Refresh fate points",
+              detail: %{"entity_id" => params["entity_id"]}
+            },
+            socket
+          )
 
         "entity_create" ->
           controller_id = if params["controller_id"] != "", do: params["controller_id"]
@@ -588,7 +633,7 @@ defmodule FateWeb.ActionsLive do
             end
 
           detail = %{
-            "entity_id" => Ash.UUID.generate(),
+            "entity_id" => params["entity_id"] || Ash.UUID.generate(),
             "name" => params["name"],
             "kind" => params["kind"] || "npc",
             "color" => color,
@@ -618,18 +663,24 @@ defmodule FateWeb.ActionsLive do
               detail
             end
 
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :entity_create,
-            description: "Create #{params["name"]}",
-            detail: detail
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :entity_create,
+              description: "Create #{params["name"]}",
+              detail: detail
+            },
+            socket
+          )
 
         "entity_edit" ->
           edit_controller_id = if params["controller_id"] != "", do: params["controller_id"]
 
           edit_color =
             if edit_controller_id do
-              bp = Enum.find(socket.assigns.participants, &(&1.participant_id == edit_controller_id))
+              bp =
+                Enum.find(socket.assigns.participants, &(&1.participant_id == edit_controller_id))
+
               if bp, do: bp.participant.color, else: nil
             end
 
@@ -642,57 +693,75 @@ defmodule FateWeb.ActionsLive do
             |> maybe_put_int("fate_points", params["fate_points"])
             |> maybe_put_int("refresh", params["refresh"])
 
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :entity_modify,
-            target_id: params["entity_id"],
-            description: "Edit #{params["name"] || "entity"}",
-            detail: detail
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :entity_modify,
+              target_id: params["entity_id"],
+              description: "Edit #{params["name"] || "entity"}",
+              detail: detail
+            },
+            socket
+          )
 
         "skill_set" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :skill_set,
-            target_id: params["entity_id"],
-            description: "#{params["skill"]} → +#{params["rating"]}",
-            detail: %{
-              "entity_id" => params["entity_id"],
-              "skill" => params["skill"],
-              "rating" => parse_int(params["rating"]) || 0
-            }
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :skill_set,
+              target_id: params["entity_id"],
+              description: "#{params["skill"]} → +#{params["rating"]}",
+              detail: %{
+                "entity_id" => params["entity_id"],
+                "skill" => params["skill"],
+                "rating" => parse_int(params["rating"]) || 0
+              }
+            },
+            socket
+          )
 
         "stunt_add" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :stunt_add,
-            target_id: params["entity_id"],
-            description: "Stunt: #{params["name"]}",
-            detail: %{
-              "entity_id" => params["entity_id"],
-              "stunt_id" => Ash.UUID.generate(),
-              "name" => params["name"],
-              "effect" => params["effect"]
-            }
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :stunt_add,
+              target_id: params["entity_id"],
+              description: "Stunt: #{params["name"]}",
+              detail: %{
+                "entity_id" => params["entity_id"],
+                "stunt_id" => params["stunt_id"] || Ash.UUID.generate(),
+                "name" => params["name"],
+                "effect" => params["effect"]
+              }
+            },
+            socket
+          )
 
         "stunt_remove" ->
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :stunt_remove,
-            target_id: params["entity_id"],
-            description: "Remove stunt",
-            detail: %{
-              "entity_id" => params["entity_id"],
-              "stunt_id" => params["stunt_id"]
-            }
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :stunt_remove,
+              target_id: params["entity_id"],
+              description: "Remove stunt",
+              detail: %{
+                "entity_id" => params["entity_id"],
+                "stunt_id" => params["stunt_id"]
+              }
+            },
+            socket
+          )
 
         "set_system" ->
-          detail = %{"system" => params["system"]}
-
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :set_system,
-            description: "Set system: #{params["system"]}",
-            detail: detail
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :set_system,
+              description: "Set system: #{params["system"]}",
+              detail: %{"system" => params["system"]}
+            },
+            socket
+          )
 
         "scene_modify" ->
           detail =
@@ -701,11 +770,15 @@ defmodule FateWeb.ActionsLive do
             |> put_non_empty("description", params["scene_description"])
             |> put_non_empty("gm_notes", params["gm_notes"])
 
-          Engine.append_event(socket.assigns.bookmark_id, %{
-            type: :scene_modify,
-            description: "Edit scene",
-            detail: detail
-          })
+          create_or_update_event(
+            params,
+            %{
+              type: :scene_modify,
+              description: "Edit scene",
+              detail: detail
+            },
+            socket
+          )
 
         "fork_bookmark" ->
           bookmark_id = socket.assigns[:fork_bookmark_id]
@@ -740,7 +813,7 @@ defmodule FateWeb.ActionsLive do
               {:error, "Bookmark not found"}
           end
 
-        "note" ->
+        modal when modal in ~w(note edit_note) ->
           text = String.trim(params["text"] || "")
 
           if text != "" do
@@ -760,60 +833,16 @@ defmodule FateWeb.ActionsLive do
                   else: d
               end)
 
-            Engine.append_event(socket.assigns.bookmark_id, %{
-              type: :note,
-              target_id: target_id,
-              description: text,
-              detail: detail
-            })
-          else
-            {:error, "Note text is required"}
-          end
-
-        "edit_note" ->
-          text = String.trim(params["text"] || "")
-          event_id = params["event_id"]
-
-          if text != "" && event_id do
-            {target_type, target_id} =
-              case String.split(params["target_ref"] || "", ":", parts: 2) do
-                ["entity", id] -> {"entity", id}
-                ["scene", id] -> {"scene", id}
-                ["zone", id] -> {"zone", id}
-                _ -> {nil, nil}
-              end
-
-            detail =
-              %{"text" => text}
-              |> then(fn d ->
-                if target_id,
-                  do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}),
-                  else: d
-              end)
-
-            case Ash.get(Fate.Game.Event, event_id, not_found_error?: false) do
-              {:ok, event} when event != nil ->
-                Ash.update!(event, %{description: text, detail: detail, target_id: target_id},
-                  action: :edit
-                )
-
-                case Engine.derive_state(socket.assigns.bookmark_id) do
-                  {:ok, state} ->
-                    Phoenix.PubSub.broadcast(
-                      Fate.PubSub,
-                      "bookmark:#{socket.assigns.bookmark_id}",
-                      {:state_updated, state}
-                    )
-
-                    {:ok, state, event}
-
-                  _ ->
-                    {:ok, nil, nil}
-                end
-
-              _ ->
-                {:error, "Event not found"}
-            end
+            create_or_update_event(
+              params,
+              %{
+                type: :note,
+                target_id: target_id,
+                description: text,
+                detail: detail
+              },
+              socket
+            )
           else
             {:error, "Note text is required"}
           end
@@ -921,7 +950,13 @@ defmodule FateWeb.ActionsLive do
 
       <%!-- Modal overlay (not for observers) --%>
       <%= unless @is_observer do %>
-        <.action_modal modal={@modal} state={@state} prefill_entity_id={@prefill_entity_id} form_data={@form_data} participants={@participants} />
+        <.action_modal
+          modal={@modal}
+          state={@state}
+          prefill_entity_id={@prefill_entity_id}
+          form_data={@form_data}
+          participants={@participants}
+        />
       <% end %>
       <%!-- Left panel: Event Log / Bookmarks tabs --%>
       <div class="w-1/2 border-r border-amber-900/30 flex flex-col">
@@ -1065,7 +1100,6 @@ defmodule FateWeb.ActionsLive do
         <% end %>
       </div>
     </div>
-
     """
   end
 
@@ -1116,9 +1150,9 @@ defmodule FateWeb.ActionsLive do
       <span class="flex-1 text-amber-100/80 truncate" style="font-family: 'Patrick Hand', cursive;">
         {@summary}
       </span>
-      <%= if @event.type == :note && !@immutable && !@is_observer do %>
+      <%= if editable_type?(@event.type) && !@immutable && !@is_observer do %>
         <button
-          phx-click="edit_note"
+          phx-click="edit_event"
           phx-value-id={@event.id}
           class="opacity-0 group-hover:opacity-100 text-amber-400/50 hover:text-amber-300 text-xs transition shrink-0"
         >
@@ -1280,7 +1314,10 @@ defmodule FateWeb.ActionsLive do
       :note ->
         text = detail["text"] || event.description || ""
         resolved = target || target_name(state, event.target_id, detail["target_type"])
-        truncated = if String.length(text) > 60, do: String.slice(text, 0..57) <> "...", else: text
+
+        truncated =
+          if String.length(text) > 60, do: String.slice(text, 0..57) <> "...", else: text
+
         if resolved, do: "#{truncated} (#{resolved})", else: truncated
 
       _ ->
@@ -1488,7 +1525,10 @@ defmodule FateWeb.ActionsLive do
       |> assign(:needs_difficulty, needs_difficulty)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
+    <div
+      class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3"
+      data-step-index={@index}
+    >
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           {step_type_label(@step.type)}
@@ -1658,7 +1698,10 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :aspects, aspects)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
+    <div
+      class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3"
+      data-step-index={@index}
+    >
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Invoke Aspect
@@ -1705,7 +1748,10 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :entities, entities)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
+    <div
+      class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3"
+      data-step-index={@index}
+    >
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Resolve Shifts
@@ -1760,7 +1806,10 @@ defmodule FateWeb.ActionsLive do
     assigns = assign(assigns, :entities, entities)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
+    <div
+      class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3"
+      data-step-index={@index}
+    >
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Take Consequence
@@ -1806,7 +1855,9 @@ defmodule FateWeb.ActionsLive do
               <option value="moderate" selected={@step.detail["severity"] == "moderate"}>
                 Moderate (4)
               </option>
-              <option value="severe" selected={@step.detail["severity"] == "severe"}>Severe (6)</option>
+              <option value="severe" selected={@step.detail["severity"] == "severe"}>
+                Severe (6)
+              </option>
               <option value="extreme" selected={@step.detail["severity"] == "extreme"}>
                 Extreme (8)
               </option>
@@ -1843,7 +1894,10 @@ defmodule FateWeb.ActionsLive do
       |> assign(:tracks, tracks)
 
     ~H"""
-    <div class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3" data-step-index={@index}>
+    <div
+      class="p-3 bg-amber-900/20 rounded-lg border border-amber-600/30 space-y-3"
+      data-step-index={@index}
+    >
       <div class="flex items-center justify-between">
         <span class="text-sm font-bold" style="font-family: 'Patrick Hand', cursive;">
           Apply Stress
@@ -1913,7 +1967,10 @@ defmodule FateWeb.ActionsLive do
 
   defp step_form(assigns) do
     ~H"""
-    <div class="flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-600/30" data-step-index={@index}>
+    <div
+      class="flex items-center gap-2 px-3 py-2 bg-amber-900/30 rounded-lg border border-amber-600/30"
+      data-step-index={@index}
+    >
       <span class="text-xs text-amber-300/50 font-bold">{@index + 1}.</span>
       <span class="text-sm flex-1" style="font-family: 'Patrick Hand', cursive;">
         {step_type_label(@step.type)}
@@ -2285,20 +2342,190 @@ defmodule FateWeb.ActionsLive do
     end
   end
 
+  defp build_edit_form_data(event) do
+    detail = event.detail || %{}
+    base = %{"event_id" => event.id}
+
+    case event.type do
+      :note ->
+        target_ref =
+          case {detail["target_type"], event.target_id} do
+            {type, id} when type != nil and id != nil -> "#{type}:#{id}"
+            _ -> ""
+          end
+
+        Map.merge(base, %{
+          "text" => detail["text"] || event.description || "",
+          "target_ref" => target_ref
+        })
+
+      :aspect_create ->
+        target_ref =
+          case {detail["target_type"], detail["target_id"] || event.target_id} do
+            {type, id} when type != nil and id != nil -> "#{type}:#{id}"
+            _ -> ""
+          end
+
+        Map.merge(base, %{
+          "target_ref" => target_ref,
+          "description" => detail["description"] || "",
+          "role" => detail["role"] || "additional",
+          "hidden" => if(detail["hidden"] == true, do: "true", else: nil)
+        })
+
+      :aspect_compel ->
+        Map.merge(base, %{
+          "actor_id" => event.actor_id || "",
+          "target_id" => event.target_id || detail["target_id"] || "",
+          "aspect_id" => detail["aspect_id"] || "",
+          "description" => detail["description"] || "",
+          "accepted" => if(detail["accepted"] != false, do: "true", else: "false")
+        })
+
+      :entity_move ->
+        Map.merge(base, %{
+          "entity_id" => detail["entity_id"] || event.actor_id || "",
+          "zone_id" => detail["zone_id"] || ""
+        })
+
+      :scene_start ->
+        Map.merge(base, %{
+          "scene_id" => detail["scene_id"] || "",
+          "name" => detail["name"] || "",
+          "scene_description" => detail["description"] || "",
+          "gm_notes" => detail["gm_notes"] || ""
+        })
+
+      :scene_modify ->
+        Map.merge(base, %{
+          "scene_id" => detail["scene_id"] || "",
+          "name" => detail["name"] || "",
+          "scene_description" => detail["description"] || "",
+          "gm_notes" => detail["gm_notes"] || ""
+        })
+
+      :entity_create ->
+        aspects_text =
+          case detail["aspects"] do
+            aspects when is_list(aspects) ->
+              Enum.map_join(aspects, "\n", fn a ->
+                if a["role"] && a["role"] != "additional",
+                  do: "#{a["role"]}|#{a["description"]}",
+                  else: a["description"] || ""
+              end)
+
+            _ ->
+              ""
+          end
+
+        Map.merge(base, %{
+          "entity_id" => detail["entity_id"] || "",
+          "name" => detail["name"] || "",
+          "kind" => detail["kind"] || "npc",
+          "controller_id" => detail["controller_id"] || "",
+          "fate_points" => to_string(detail["fate_points"] || ""),
+          "refresh" => to_string(detail["refresh"] || ""),
+          "parent_entity_id" => detail["parent_entity_id"] || "",
+          "aspects" => aspects_text
+        })
+
+      :entity_modify ->
+        Map.merge(base, %{
+          "entity_id" => detail["entity_id"] || event.target_id || "",
+          "name" => detail["name"] || "",
+          "kind" => detail["kind"] || "",
+          "controller_id" => detail["controller_id"] || "",
+          "fate_points" => to_string(detail["fate_points"] || ""),
+          "refresh" => to_string(detail["refresh"] || "")
+        })
+
+      :skill_set ->
+        Map.merge(base, %{
+          "entity_id" => detail["entity_id"] || event.target_id || "",
+          "skill" => detail["skill"] || "",
+          "rating" => to_string(detail["rating"] || "")
+        })
+
+      :stunt_add ->
+        Map.merge(base, %{
+          "entity_id" => detail["entity_id"] || event.target_id || "",
+          "stunt_id" => detail["stunt_id"] || "",
+          "name" => detail["name"] || "",
+          "effect" => detail["effect"] || ""
+        })
+
+      :stunt_remove ->
+        Map.merge(base, %{
+          "entity_id" => detail["entity_id"] || event.target_id || "",
+          "stunt_id" => detail["stunt_id"] || ""
+        })
+
+      :set_system ->
+        Map.merge(base, %{"system" => detail["system"] || "core"})
+
+      type when type in ~w(fate_point_spend fate_point_earn fate_point_refresh)a ->
+        Map.merge(base, %{"entity_id" => detail["entity_id"] || event.target_id || ""})
+
+      _ ->
+        base
+    end
+  end
+
+  defp update_event_and_broadcast(event, attrs, socket) do
+    Ash.update!(event, attrs, action: :edit)
+
+    case Engine.derive_state(socket.assigns.bookmark_id) do
+      {:ok, state} ->
+        Phoenix.PubSub.broadcast(
+          Fate.PubSub,
+          "bookmark:#{socket.assigns.bookmark_id}",
+          {:state_updated, state}
+        )
+
+        {:ok, state, event}
+
+      _ ->
+        {:ok, nil, nil}
+    end
+  end
+
+  defp create_or_update_event(params, attrs, socket) do
+    case params["event_id"] do
+      nil ->
+        Engine.append_event(socket.assigns.bookmark_id, attrs)
+
+      event_id ->
+        case Ash.get(Fate.Game.Event, event_id, not_found_error?: false) do
+          {:ok, event} when event != nil ->
+            update_attrs = Map.take(attrs, [:description, :detail, :target_id, :actor_id])
+            update_event_and_broadcast(event, update_attrs, socket)
+
+          _ ->
+            {:error, "Event not found"}
+        end
+    end
+  end
+
   defp action_modal(%{modal: nil} = assigns), do: ~H""
 
   defp action_modal(assigns) do
     entities = if assigns.state, do: Map.values(assigns.state.entities), else: []
-    assigns = assign(assigns, :entities, entities)
+    editing? = assigns.form_data["event_id"] != nil
+
+    assigns =
+      assigns
+      |> assign(:entities, entities)
+      |> assign(:editing?, editing?)
 
     ~H"""
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl">
         <h3 class="text-lg font-bold mb-4" style="font-family: 'Permanent Marker', cursive;">
-          {modal_title(@modal)}
+          {if(@editing?, do: edit_modal_title(@modal), else: modal_title(@modal))}
         </h3>
 
         <form phx-submit="submit_modal" phx-change="modal_form_changed" class="space-y-3">
+          <input :if={@editing?} type="hidden" name="event_id" value={@form_data["event_id"]} />
           <.modal_fields
             modal={@modal}
             entities={@entities}
@@ -2349,7 +2576,20 @@ defmodule FateWeb.ActionsLive do
   defp modal_title("edit_note"), do: "Edit Note"
   defp modal_title(other), do: other
 
+  defp edit_modal_title("aspect_create"), do: "Edit Aspect"
+  defp edit_modal_title("entity_create"), do: "Edit Entity Creation"
+  defp edit_modal_title("scene_start"), do: "Edit Scene Start"
+  defp edit_modal_title("stunt_add"), do: "Edit Stunt"
+  defp edit_modal_title("stunt_remove"), do: "Edit Stunt Removal"
+  defp edit_modal_title("skill_set"), do: "Edit Skill"
+  defp edit_modal_title("note"), do: "Edit Note"
+  defp edit_modal_title("fate_point_spend"), do: "Edit Fate Point Spend"
+  defp edit_modal_title("fate_point_earn"), do: "Edit Fate Point Earn"
+  defp edit_modal_title("fate_point_refresh"), do: "Edit Fate Point Refresh"
+  defp edit_modal_title(modal), do: modal_title(modal)
+
   defp modal_fields(%{modal: "aspect_create"} = assigns) do
+    fd = assigns[:form_data] || %{}
     all_scenes = if assigns.state, do: assigns.state.scenes, else: []
 
     scene_and_zone_options =
@@ -2364,12 +2604,14 @@ defmodule FateWeb.ActionsLive do
     all_options = scene_and_zone_options ++ entity_options
 
     prefill =
-      if assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: nil
+      fd["target_ref"] ||
+        if(assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: nil)
 
     assigns =
       assigns
       |> assign(:all_options, all_options)
       |> assign(:prefill, prefill)
+      |> assign(:fd, fd)
 
     ~H"""
     <div>
@@ -2389,10 +2631,12 @@ defmodule FateWeb.ActionsLive do
       label="Aspect Text"
       placeholder="e.g. On Fire! or Flanking Position"
       required={true}
+      value={@fd["description"]}
     />
     <.select_input
       name="role"
       label="Role"
+      selected={@fd["role"]}
       options={[
         {"situation", "Situation"},
         {"boost", "Boost"},
@@ -2402,12 +2646,20 @@ defmodule FateWeb.ActionsLive do
       ]}
     />
     <label class="flex items-center gap-2 text-sm text-amber-200/70">
-      <input type="checkbox" name="hidden" value="true" class="rounded" /> Hidden from players
+      <input
+        type="checkbox"
+        name="hidden"
+        value="true"
+        checked={@fd["hidden"] == "true"}
+        class="rounded"
+      /> Hidden from players
     </label>
     """
   end
 
   defp modal_fields(%{modal: "entity_create"} = assigns) do
+    fd = assigns[:form_data] || %{}
+
     parent_options =
       if assigns.state do
         assigns.state.entities
@@ -2426,12 +2678,21 @@ defmodule FateWeb.ActionsLive do
       assigns
       |> assign(:parent_options, parent_options)
       |> assign(:controller_options, controller_options)
+      |> assign(:fd, fd)
 
     ~H"""
-    <.text_input name="name" label="Name" placeholder="Character name" required={true} />
+    <input :if={@fd["entity_id"]} type="hidden" name="entity_id" value={@fd["entity_id"]} />
+    <.text_input
+      name="name"
+      label="Name"
+      placeholder="Character name"
+      required={true}
+      value={@fd["name"]}
+    />
     <.select_input
       name="kind"
       label="Kind"
+      selected={@fd["kind"]}
       options={[
         {"pc", "PC"},
         {"npc", "NPC"},
@@ -2451,12 +2712,12 @@ defmodule FateWeb.ActionsLive do
       >
         <option value="">None (GM-controlled)</option>
         <%= for {id, label} <- @controller_options do %>
-          <option value={id}>{label}</option>
+          <option value={id} selected={id == @fd["controller_id"]}>{label}</option>
         <% end %>
       </select>
     </div>
-    <.text_input name="fate_points" label="Fate Points" placeholder="3" />
-    <.text_input name="refresh" label="Refresh" placeholder="3" />
+    <.text_input name="fate_points" label="Fate Points" placeholder="3" value={@fd["fate_points"]} />
+    <.text_input name="refresh" label="Refresh" placeholder="3" value={@fd["refresh"]} />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">Parent Entity (optional)</label>
       <select
@@ -2465,7 +2726,9 @@ defmodule FateWeb.ActionsLive do
       >
         <option value="">None</option>
         <%= for {id, label} <- @parent_options do %>
-          <option value={id} selected={id == @prefill_entity_id}>{label}</option>
+          <option value={id} selected={id == (@fd["parent_entity_id"] || @prefill_entity_id)}>
+            {label}
+          </option>
         <% end %>
       </select>
     </div>
@@ -2478,18 +2741,29 @@ defmodule FateWeb.ActionsLive do
         placeholder="high_concept|Infamous Girl with Sword\ntrouble|Tempted by Shiny Things\nRivals in the Underworld"
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
         rows="4"
-      />
+      >{@fd["aspects"]}</textarea>
     </div>
     """
   end
 
   defp modal_fields(%{modal: "scene_start"} = assigns) do
+    fd = assigns[:form_data] || %{}
+    assigns = assign(assigns, :fd, fd)
+
     ~H"""
-    <.text_input name="name" label="Scene Name" placeholder="Dockside Warehouse" required={true} />
+    <input :if={@fd["scene_id"]} type="hidden" name="scene_id" value={@fd["scene_id"]} />
+    <.text_input
+      name="name"
+      label="Scene Name"
+      placeholder="Dockside Warehouse"
+      required={true}
+      value={@fd["name"]}
+    />
     <.text_input
       name="scene_description"
       label="Description"
       placeholder="A brief framing of the scene"
+      value={@fd["scene_description"]}
     />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
@@ -2498,7 +2772,7 @@ defmodule FateWeb.ActionsLive do
         placeholder="Private prep notes..."
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
         rows="3"
-      />
+      >{@fd["gm_notes"]}</textarea>
     </div>
     """
   end
@@ -2532,6 +2806,8 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "entity_move"} = assigns) do
+    fd = assigns[:form_data] || %{}
+
     zones =
       if assigns.state do
         assigns.state.scenes
@@ -2541,7 +2817,10 @@ defmodule FateWeb.ActionsLive do
         []
       end
 
-    assigns = assign(assigns, :zones, zones)
+    assigns =
+      assigns
+      |> assign(:zones, zones)
+      |> assign(:fd, fd)
 
     ~H"""
     <.entity_select
@@ -2553,14 +2832,16 @@ defmodule FateWeb.ActionsLive do
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">To Zone</label>
       <%= if @zones == [] do %>
-        <p class="text-sm text-amber-200/40 italic">No zones available — create a scene with zones first</p>
+        <p class="text-sm text-amber-200/40 italic">
+          No zones available — create a scene with zones first
+        </p>
       <% else %>
         <select
           name="zone_id"
           class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
         >
           <%= for zone <- @zones do %>
-            <option value={zone.id}>{zone.name}</option>
+            <option value={zone.id} selected={zone.id == @fd["zone_id"]}>{zone.name}</option>
           <% end %>
         </select>
       <% end %>
@@ -2569,6 +2850,8 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "aspect_compel"} = assigns) do
+    fd = assigns[:form_data] || %{}
+
     aspects =
       if assigns.state do
         assigns.state.entities
@@ -2582,20 +2865,23 @@ defmodule FateWeb.ActionsLive do
         []
       end
 
-    assigns = assign(assigns, :aspects, aspects)
+    assigns =
+      assigns
+      |> assign(:aspects, aspects)
+      |> assign(:fd, fd)
 
     ~H"""
     <.entity_select
       name="actor_id"
       label="Compelling Entity (GM/NPC)"
       entities={@entities}
-      selected={nil}
+      selected={@fd["actor_id"]}
     />
     <.entity_select
       name="target_id"
       label="Target Entity"
       entities={@entities}
-      selected={@prefill_entity_id}
+      selected={@fd["target_id"] || @prefill_entity_id}
     />
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">Aspect</label>
@@ -2606,7 +2892,7 @@ defmodule FateWeb.ActionsLive do
       >
         <option value="">Select aspect...</option>
         <%= for {id, label} <- @aspects do %>
-          <option value={id}>{label}</option>
+          <option value={id} selected={id == @fd["aspect_id"]}>{label}</option>
         <% end %>
       </select>
     </div>
@@ -2614,6 +2900,7 @@ defmodule FateWeb.ActionsLive do
       name="description"
       label="Compel Description"
       placeholder="What complication does this cause?"
+      value={@fd["description"]}
     />
     <div class="flex items-center gap-2">
       <input type="hidden" name="accepted" value="false" />
@@ -2621,7 +2908,7 @@ defmodule FateWeb.ActionsLive do
         type="checkbox"
         name="accepted"
         value="true"
-        checked
+        checked={@fd["accepted"] != "false"}
         class="rounded bg-amber-900/30 border-amber-700/30 text-amber-600"
       />
       <label class="text-sm text-amber-200/70">Accepted</label>
@@ -2630,6 +2917,9 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "entity_edit"} = assigns) do
+    fd = assigns[:form_data] || %{}
+    editing? = fd["event_id"] != nil
+
     entity =
       if assigns.prefill_entity_id && assigns.state do
         Map.get(assigns.state.entities, assigns.prefill_entity_id)
@@ -2642,11 +2932,29 @@ defmodule FateWeb.ActionsLive do
     assigns =
       assigns
       |> assign(:entity, entity)
-      |> assign(:e_name, if(entity, do: entity.name, else: nil))
-      |> assign(:e_kind, if(entity, do: to_string(entity.kind), else: nil))
-      |> assign(:e_controller, if(entity, do: entity.controller_id, else: nil))
-      |> assign(:e_fp, if(entity && entity.fate_points, do: to_string(entity.fate_points), else: nil))
-      |> assign(:e_refresh, if(entity && entity.refresh, do: to_string(entity.refresh), else: nil))
+      |> assign(:e_name, if(editing?, do: fd["name"], else: if(entity, do: entity.name)))
+      |> assign(
+        :e_kind,
+        if(editing?, do: fd["kind"], else: if(entity, do: to_string(entity.kind)))
+      )
+      |> assign(
+        :e_controller,
+        if(editing?, do: fd["controller_id"], else: if(entity, do: entity.controller_id))
+      )
+      |> assign(
+        :e_fp,
+        if(editing?,
+          do: fd["fate_points"],
+          else: if(entity && entity.fate_points, do: to_string(entity.fate_points))
+        )
+      )
+      |> assign(
+        :e_refresh,
+        if(editing?,
+          do: fd["refresh"],
+          else: if(entity && entity.refresh, do: to_string(entity.refresh))
+        )
+      )
       |> assign(:controller_options, controller_options)
 
     ~H"""
@@ -2691,9 +2999,13 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "skill_set"} = assigns) do
+    fd = assigns[:form_data] || %{}
     skill_list = if assigns.state, do: assigns.state.skill_list, else: []
 
-    assigns = assign(assigns, :skill_list, skill_list)
+    assigns =
+      assigns
+      |> assign(:skill_list, skill_list)
+      |> assign(:fd, fd)
 
     ~H"""
     <.entity_select
@@ -2712,29 +3024,40 @@ defmodule FateWeb.ActionsLive do
           class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
         >
           <%= for skill <- @skill_list do %>
-            <option value={skill}>{skill}</option>
+            <option value={skill} selected={skill == @fd["skill"]}>{skill}</option>
           <% end %>
         </select>
       <% end %>
     </div>
-    <.text_input name="rating" label="Rating" placeholder="2" />
+    <.text_input name="rating" label="Rating" placeholder="2" value={@fd["rating"]} />
     """
   end
 
   defp modal_fields(%{modal: "stunt_add"} = assigns) do
+    fd = assigns[:form_data] || %{}
+    assigns = assign(assigns, :fd, fd)
+
     ~H"""
+    <input :if={@fd["stunt_id"]} type="hidden" name="stunt_id" value={@fd["stunt_id"]} />
     <.entity_select
       name="entity_id"
       label="Entity"
       entities={@entities}
       selected={@prefill_entity_id}
     />
-    <.text_input name="name" label="Stunt Name" placeholder="Master Swordswoman" />
-    <.text_input name="effect" label="Effect" placeholder="+2 to Fight when dueling one-on-one" />
+    <.text_input name="name" label="Stunt Name" placeholder="Master Swordswoman" value={@fd["name"]} />
+    <.text_input
+      name="effect"
+      label="Effect"
+      placeholder="+2 to Fight when dueling one-on-one"
+      value={@fd["effect"]}
+    />
     """
   end
 
   defp modal_fields(%{modal: "stunt_remove"} = assigns) do
+    fd = assigns[:form_data] || %{}
+
     entity =
       if assigns.prefill_entity_id && assigns.state,
         do: Map.get(assigns.state.entities, assigns.prefill_entity_id),
@@ -2755,7 +3078,10 @@ defmodule FateWeb.ActionsLive do
         end
       end
 
-    assigns = assign(assigns, :stunts, stunts)
+    assigns =
+      assigns
+      |> assign(:stunts, stunts)
+      |> assign(:fd, fd)
 
     ~H"""
     <.entity_select
@@ -2772,7 +3098,7 @@ defmodule FateWeb.ActionsLive do
       >
         <option value="">Select stunt...</option>
         <%= for {id, label} <- @stunts do %>
-          <option value={id}>{label}</option>
+          <option value={id} selected={id == @fd["stunt_id"]}>{label}</option>
         <% end %>
       </select>
     </div>
@@ -2780,10 +3106,14 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "set_system"} = assigns) do
+    fd = assigns[:form_data] || %{}
+    assigns = assign(assigns, :fd, fd)
+
     ~H"""
     <.select_input
       name="system"
       label="System"
+      selected={@fd["system"]}
       options={[
         {"core", "Fate Core"},
         {"accelerated", "Fate Accelerated (FAE)"}
@@ -2793,6 +3123,9 @@ defmodule FateWeb.ActionsLive do
   end
 
   defp modal_fields(%{modal: "scene_modify"} = assigns) do
+    fd = assigns[:form_data] || %{}
+    editing? = fd["event_id"] != nil
+
     scenes =
       if assigns.state,
         do: Enum.filter(assigns.state.scenes, &(&1.status == :active)),
@@ -2803,9 +3136,22 @@ defmodule FateWeb.ActionsLive do
     assigns =
       assigns
       |> assign(:scenes, scenes)
-      |> assign(:s_name, if(first_scene, do: first_scene.name, else: nil))
-      |> assign(:s_desc, if(first_scene, do: first_scene.description, else: nil))
-      |> assign(:s_notes, if(first_scene, do: first_scene.gm_notes, else: nil))
+      |> assign(
+        :s_name,
+        if(editing?, do: fd["name"], else: if(first_scene, do: first_scene.name))
+      )
+      |> assign(
+        :s_desc,
+        if(editing?,
+          do: fd["scene_description"],
+          else: if(first_scene, do: first_scene.description)
+        )
+      )
+      |> assign(
+        :s_notes,
+        if(editing?, do: fd["gm_notes"], else: if(first_scene, do: first_scene.gm_notes))
+      )
+      |> assign(:fd, fd)
 
     ~H"""
     <div>
@@ -2815,7 +3161,7 @@ defmodule FateWeb.ActionsLive do
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
       >
         <%= for scene <- @scenes do %>
-          <option value={scene.id}>{scene.name}</option>
+          <option value={scene.id} selected={scene.id == @fd["scene_id"]}>{scene.name}</option>
         <% end %>
       </select>
     </div>
@@ -2866,7 +3212,10 @@ defmodule FateWeb.ActionsLive do
       end
 
     all_options = scene_opts ++ entity_opts
-    prefill_ref = if assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: ""
+
+    prefill_ref =
+      if assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: ""
+
     assigns = assigns |> assign(:all_options, all_options) |> assign(:prefill_ref, prefill_ref)
 
     ~H"""
@@ -2903,10 +3252,8 @@ defmodule FateWeb.ActionsLive do
       |> assign(:all_options, all_options)
       |> assign(:note_text, form_data["text"] || "")
       |> assign(:note_target_ref, form_data["target_ref"] || "")
-      |> assign(:note_event_id, form_data["event_id"])
 
     ~H"""
-    <input type="hidden" name="event_id" value={@note_event_id} />
     <.note_form_fields all_options={@all_options} text={@note_text} target_ref={@note_target_ref} />
     """
   end
