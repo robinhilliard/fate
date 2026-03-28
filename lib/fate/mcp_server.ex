@@ -1104,11 +1104,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("concede", %{"entity_id" => entity_id}, state) do
-    entity_name =
-      case Engine.derive_state(state.bookmark_id) do
-        {:ok, d} -> (Map.get(d.entities, entity_id) || %{name: "entity"}).name
-        _ -> "entity"
-      end
+    entity_name = entity_name_from_state(state.bookmark_id, entity_id)
 
     case Engine.append_event(state.bookmark_id, %{
            type: :concede,
@@ -1271,13 +1267,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("modify_zone", %{"zone_id" => zone_id} = args, state) do
-    detail = %{"zone_id" => zone_id}
-
-    detail =
-      if Map.has_key?(args, "name"), do: Map.put(detail, "name", args["name"]), else: detail
-
-    detail =
-      if Map.has_key?(args, "hidden"), do: Map.put(detail, "hidden", args["hidden"]), else: detail
+    detail = pick_present_keys(%{"zone_id" => zone_id}, args, ~w(name hidden))
 
     case Engine.append_event(state.bookmark_id, %{
            type: :zone_modify,
@@ -1290,20 +1280,8 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("modify_aspect", %{"aspect_id" => aspect_id} = args, state) do
-    detail = %{"aspect_id" => aspect_id}
-
     detail =
-      if Map.has_key?(args, "description"),
-        do: Map.put(detail, "description", args["description"]),
-        else: detail
-
-    detail =
-      if Map.has_key?(args, "hidden"), do: Map.put(detail, "hidden", args["hidden"]), else: detail
-
-    detail =
-      if Map.has_key?(args, "free_invokes"),
-        do: Map.put(detail, "free_invokes", args["free_invokes"]),
-        else: detail
+      pick_present_keys(%{"aspect_id" => aspect_id}, args, ~w(description hidden free_invokes))
 
     case Engine.append_event(state.bookmark_id, %{
            type: :aspect_modify,
@@ -1347,17 +1325,7 @@ defmodule Fate.McpServer do
         %{"entity_id" => entity_id, "description" => description} = args,
         state
       ) do
-    entity_name =
-      case Engine.derive_state(state.bookmark_id) do
-        {:ok, derived} ->
-          case Map.get(derived.entities, entity_id) do
-            nil -> "entity"
-            e -> e.name
-          end
-
-        _ ->
-          "entity"
-      end
+    entity_name = entity_name_from_state(state.bookmark_id, entity_id)
 
     Engine.append_event(state.bookmark_id, %{
       type: :aspect_compel,
@@ -1386,11 +1354,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("taken_out", %{"entity_id" => entity_id}, state) do
-    entity_name =
-      case Engine.derive_state(state.bookmark_id) do
-        {:ok, d} -> (Map.get(d.entities, entity_id) || %{name: "entity"}).name
-        _ -> "entity"
-      end
+    entity_name = entity_name_from_state(state.bookmark_id, entity_id)
 
     case Engine.append_event(state.bookmark_id, %{
            type: :taken_out,
@@ -1435,19 +1399,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("scene_modify", %{"scene_id" => scene_id} = args, state) do
-    detail =
-      %{"scene_id" => scene_id}
-      |> then(fn d ->
-        if Map.has_key?(args, "name"), do: Map.put(d, "name", args["name"]), else: d
-      end)
-      |> then(fn d ->
-        if Map.has_key?(args, "description"),
-          do: Map.put(d, "description", args["description"]),
-          else: d
-      end)
-      |> then(fn d ->
-        if Map.has_key?(args, "gm_notes"), do: Map.put(d, "gm_notes", args["gm_notes"]), else: d
-      end)
+    detail = pick_present_keys(%{"scene_id" => scene_id}, args, ~w(name description gm_notes))
 
     case Engine.append_event(state.bookmark_id, %{
            type: :scene_modify,
@@ -1865,5 +1817,24 @@ defmodule Fate.McpServer do
       target_id: event.target_id,
       description: event.description
     }
+  end
+
+  defp entity_name_from_state(bookmark_id, entity_id) do
+    case Engine.derive_state(bookmark_id) do
+      {:ok, derived} ->
+        case Map.get(derived.entities, entity_id) do
+          nil -> "entity"
+          e -> e.name
+        end
+
+      _ ->
+        "entity"
+    end
+  end
+
+  defp pick_present_keys(base_map, source_map, keys) do
+    Enum.reduce(keys, base_map, fn key, acc ->
+      if Map.has_key?(source_map, key), do: Map.put(acc, key, source_map[key]), else: acc
+    end)
   end
 end

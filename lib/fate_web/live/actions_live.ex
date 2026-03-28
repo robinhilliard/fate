@@ -3170,68 +3170,19 @@ defmodule FateWeb.ActionsLive do
     """
   end
 
-  defp modal_fields(%{modal: "note"} = assigns) do
-    active_scene = assigns.state && Enum.find(assigns.state.scenes, &(&1.status == :active))
-    zones = if active_scene, do: active_scene.zones, else: []
-
-    scene_opts =
-      if active_scene do
-        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
-          Enum.map(zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
-      else
-        []
-      end
-
-    entity_opts =
-      if assigns.state do
-        assigns.state.entities
-        |> Map.values()
-        |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
-      else
-        []
-      end
-
-    all_options = scene_opts ++ entity_opts
+  defp modal_fields(%{modal: modal} = assigns) when modal in ~w(note edit_note) do
+    fd = assigns[:form_data] || %{}
+    all_options = note_target_options(assigns.state)
 
     prefill_ref =
-      if assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: ""
-
-    assigns = assigns |> assign(:all_options, all_options) |> assign(:prefill_ref, prefill_ref)
-
-    ~H"""
-    <.note_form_fields all_options={@all_options} text="" target_ref={@prefill_ref} />
-    """
-  end
-
-  defp modal_fields(%{modal: "edit_note"} = assigns) do
-    active_scene = assigns.state && Enum.find(assigns.state.scenes, &(&1.status == :active))
-    zones = if active_scene, do: active_scene.zones, else: []
-
-    scene_opts =
-      if active_scene do
-        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
-          Enum.map(zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
-      else
-        []
-      end
-
-    entity_opts =
-      if assigns.state do
-        assigns.state.entities
-        |> Map.values()
-        |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
-      else
-        []
-      end
-
-    all_options = scene_opts ++ entity_opts
-    form_data = assigns[:form_data] || %{}
+      fd["target_ref"] ||
+        if(assigns.prefill_entity_id, do: "entity:#{assigns.prefill_entity_id}", else: "")
 
     assigns =
       assigns
       |> assign(:all_options, all_options)
-      |> assign(:note_text, form_data["text"] || "")
-      |> assign(:note_target_ref, form_data["target_ref"] || "")
+      |> assign(:note_text, fd["text"] || "")
+      |> assign(:note_target_ref, prefill_ref)
 
     ~H"""
     <.note_form_fields all_options={@all_options} text={@note_text} target_ref={@note_target_ref} />
@@ -3242,6 +3193,27 @@ defmodule FateWeb.ActionsLive do
     ~H"""
     <p class="text-sm text-amber-200/50">No fields configured for this action type.</p>
     """
+  end
+
+  defp note_target_options(nil), do: []
+
+  defp note_target_options(state) do
+    active_scene = Enum.find(state.scenes, &(&1.status == :active))
+
+    scene_opts =
+      if active_scene do
+        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
+          Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
+      else
+        []
+      end
+
+    entity_opts =
+      state.entities
+      |> Map.values()
+      |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+
+    scene_opts ++ entity_opts
   end
 
   defp note_form_fields(assigns) do
