@@ -13,15 +13,13 @@ config :fate, Fate.Repo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
-chromedriver_path = Path.expand("../priv/chromedriver", __DIR__)
-
 chromedriver_opts =
-  if System.get_env("CI") do
-    [headless: true, path: chromedriver_path]
+  if System.get_env("GITHUB_ACTIONS") do
+    [headless: true]
   else
     [
       headless: System.get_env("SHOW_BROWSER") != "1",
-      path: chromedriver_path
+      path: Path.expand("../priv/chromedriver", __DIR__)
     ]
   end
 
