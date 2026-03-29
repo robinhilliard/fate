@@ -11,7 +11,7 @@ defmodule FateWeb.Features.SceneTest do
   defp setup_bookmark(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
   end
 
   defp create_scene_via_actions(session, name) do
@@ -123,7 +123,7 @@ defmodule FateWeb.Features.SceneTest do
     gm =
       gm
       |> join_as_gm("Test GM")
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_scene_via_actions("Shared Scene")
       |> open_table()
 

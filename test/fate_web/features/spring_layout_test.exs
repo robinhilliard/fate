@@ -4,7 +4,7 @@ defmodule FateWeb.Features.SpringLayoutTest do
   defp setup_with_entities(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
     |> create_entity("Spring Entity")
     |> open_table()
     |> then(fn s -> :timer.sleep(3_000); s end)

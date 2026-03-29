@@ -137,6 +137,9 @@ defmodule FateWeb.FeatureCase do
 
     # ── Bookmark helpers ──
 
+    @doc """
+    Forks a new bookmark from the current bookmark.
+    """
     def fork_bookmark(session, name) do
       bookmark_id = get_bookmark_id(session)
 
@@ -150,6 +153,41 @@ defmodule FateWeb.FeatureCase do
       |> click(Query.button("Confirm"))
       |> find(Query.css("#table-view"), fn s -> s end)
       |> wait_for_splash_dismiss()
+    end
+
+    @doc """
+    Forks a new bookmark from a specific parent found by name in the bookmark tree.
+    This is used to fork from "New Game" to get a clean bookmark without demo data.
+    """
+    def fork_bookmark_from(session, parent_name, new_name) do
+      session =
+        session
+        |> open_actions()
+        |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='bookmarks']"))
+        |> find(Query.css("#bookmark-tree"), fn s -> s end)
+
+      parent_bookmark_id = eval_script(session, """
+        const nodes = document.querySelectorAll('#bookmark-tree button[phx-click="fork_bookmark"]');
+        for (const btn of nodes) {
+          const row = btn.closest('.flex');
+          if (row && row.textContent.includes(arguments[0])) {
+            return btn.getAttribute('phx-value-bookmark-id');
+          }
+        }
+        return null;
+      """, [parent_name])
+
+      if parent_bookmark_id do
+        session
+        |> click(Query.css("button[phx-click='fork_bookmark'][phx-value-bookmark-id='#{parent_bookmark_id}']"))
+        |> assert_has(Query.css("form[phx-submit='submit_modal']"))
+        |> fill_in(Query.css("input[name='name']"), with: new_name)
+        |> click(Query.button("Confirm"))
+        |> find(Query.css("#table-view"), fn s -> s end)
+        |> wait_for_splash_dismiss()
+      else
+        raise "Could not find bookmark named '#{parent_name}' in the bookmark tree"
+      end
     end
 
     # ── Drag-and-drop helper ──

@@ -4,7 +4,7 @@ defmodule FateWeb.Features.AspectTest do
   defp setup_with_entity(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
     |> create_entity("Aspect Target")
   end
 
@@ -84,7 +84,7 @@ defmodule FateWeb.Features.AspectTest do
     gm =
       gm
       |> join_as_gm("Test GM")
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity("Vis Entity")
       |> open_actions()
       |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))

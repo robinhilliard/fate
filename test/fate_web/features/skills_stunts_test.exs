@@ -4,10 +4,23 @@ defmodule FateWeb.Features.SkillsStuntsTest do
   defp setup_with_entity(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
+    |> set_system("core")
     |> create_entity("Skill Test Entity")
     |> open_table()
     |> then(fn s -> :timer.sleep(2_000); s end)
+  end
+
+  defp set_system(session, system) do
+    session
+    |> open_actions()
+    |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))
+    |> assert_has(Query.text("Action Palette"))
+    |> click(Query.css("#quick-set_system"))
+    |> assert_has(Query.css("form[phx-submit='submit_modal']"))
+    |> select_option_by_value("system", system)
+    |> click(Query.button("Confirm"))
+    |> then(fn s -> :timer.sleep(1_000); s end)
   end
 
   defp create_entity(session, name) do
@@ -54,7 +67,8 @@ defmodule FateWeb.Features.SkillsStuntsTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
+      |> set_system("core")
       |> create_entity("Skill Entity")
       |> open_actions()
       |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))
@@ -81,7 +95,7 @@ defmodule FateWeb.Features.SkillsStuntsTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity("Stunt Entity")
       |> open_actions()
       |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))

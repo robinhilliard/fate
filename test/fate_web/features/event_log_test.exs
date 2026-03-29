@@ -4,7 +4,7 @@ defmodule FateWeb.Features.EventLogTest do
   defp setup_with_events(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
     |> create_entity("Event Entity A")
     |> create_entity("Event Entity B")
   end
@@ -72,7 +72,7 @@ defmodule FateWeb.Features.EventLogTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> open_actions()
 
     # Should start on bookmarks tab

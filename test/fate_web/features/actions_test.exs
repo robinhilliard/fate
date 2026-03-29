@@ -4,7 +4,7 @@ defmodule FateWeb.Features.ActionsTest do
   defp setup_with_entity(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
     |> create_entity("Actions Entity")
   end
 
@@ -31,7 +31,7 @@ defmodule FateWeb.Features.ActionsTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> open_action_palette()
 
     assert_has(session, Query.css("#quick-entity_create"))
@@ -79,7 +79,7 @@ defmodule FateWeb.Features.ActionsTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> open_action_palette()
       |> click(Query.css("#exchange-attack", count: :any, at: 0))
 
@@ -102,7 +102,7 @@ defmodule FateWeb.Features.ActionsTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> open_action_palette()
 
     click(session, Query.css("#exchange-attack", count: :any, at: 0))

@@ -4,7 +4,7 @@ defmodule FateWeb.Features.TableInteractionsTest do
   defp setup_with_entity(session) do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
     |> create_entity("Table Test NPC")
     |> open_table()
     |> then(fn s -> :timer.sleep(2_000); s end)
@@ -90,7 +90,7 @@ defmodule FateWeb.Features.TableInteractionsTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity("Movable NPC")
 
     session =

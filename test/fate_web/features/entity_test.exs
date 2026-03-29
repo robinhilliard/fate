@@ -20,7 +20,7 @@ defmodule FateWeb.Features.EntityTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity_via_modal("Test Hero", "pc")
       |> open_table()
 
@@ -30,7 +30,7 @@ defmodule FateWeb.Features.EntityTest do
   feature "create entity event appears in event log", %{session: session} do
     session
     |> join_as_gm()
-    |> fork_bookmark("UI Testing")
+    |> fork_bookmark_from("New Game", "UI Testing")
     |> create_entity_via_modal("Event Log Entity")
     |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))
     |> assert_has(Query.text("Event Log Entity"))
@@ -40,7 +40,7 @@ defmodule FateWeb.Features.EntityTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity_via_modal("Hideable NPC")
       |> open_table()
 
@@ -69,7 +69,7 @@ defmodule FateWeb.Features.EntityTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity_via_modal("Removable NPC")
       |> open_table()
 
@@ -95,7 +95,7 @@ defmodule FateWeb.Features.EntityTest do
     gm =
       gm
       |> join_as_gm("Test GM")
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity_via_modal("Secret NPC")
       |> open_table()
 
@@ -125,7 +125,7 @@ defmodule FateWeb.Features.EntityTest do
     gm =
       gm
       |> join_as_gm("Test GM")
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> create_entity_via_modal("Hidden Then Revealed")
       |> open_table()
 

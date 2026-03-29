@@ -11,11 +11,24 @@ defmodule FateWeb.Features.BookmarkTest do
     assert_has(session, Query.css("#table-view"))
   end
 
+  feature "fork from New Game creates clean bookmark without demo data", %{session: session} do
+    session =
+      session
+      |> join_as_gm()
+      |> fork_bookmark_from("New Game", "Clean Fork")
+      |> open_table()
+
+    :timer.sleep(1_000)
+    assert_has(session, Query.css("#table-view"))
+    refute_has(session, Query.text("Behind the Big Top"))
+    assert_has(session, Query.text("No Scene", minimum: 1))
+  end
+
   feature "forked bookmark appears in bookmark tree", %{session: session} do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> open_actions()
       |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='bookmarks']"))
       |> find(Query.css("#bookmark-tree"), fn s -> s end)
@@ -27,7 +40,7 @@ defmodule FateWeb.Features.BookmarkTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> open_actions()
       |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='bookmarks']"))
       |> find(Query.css("#bookmark-tree"), fn s -> s end)
@@ -39,7 +52,7 @@ defmodule FateWeb.Features.BookmarkTest do
     session =
       session
       |> join_as_gm()
-      |> fork_bookmark("UI Testing")
+      |> fork_bookmark_from("New Game", "UI Testing")
       |> fork_bookmark("Nested Fork")
       |> open_actions()
       |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='bookmarks']"))
