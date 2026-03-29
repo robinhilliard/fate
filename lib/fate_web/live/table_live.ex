@@ -361,6 +361,14 @@ defmodule FateWeb.TableLive do
     {:noreply, assign(socket, :table_modal, {"entity_aspect_add", entity_id})}
   end
 
+  def handle_event(
+        "ring_action",
+        %{"action" => "add_entity_note", "entity-id" => entity_id},
+        socket
+      ) do
+    {:noreply, assign(socket, :table_modal, {"note_create_for", entity_id})}
+  end
+
   def handle_event("ring_action", %{"action" => action, "entity-id" => entity_id}, socket) do
     branch_id = socket.assigns.bookmark_id
 
@@ -635,6 +643,30 @@ defmodule FateWeb.TableLive do
 
           nil
 
+        {"note_create_for", _entity_id} ->
+          text = String.trim(params["text"] || "")
+
+          if text != "" do
+            {target_type, target_id} = FateWeb.Helpers.parse_target_ref(params["target_ref"])
+
+            detail =
+              %{"text" => text}
+              |> then(fn d ->
+                if target_id,
+                  do: Map.merge(d, %{"target_id" => target_id, "target_type" => target_type}),
+                  else: d
+              end)
+
+            Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+              type: :note,
+              target_id: target_id,
+              description: text,
+              detail: detail
+            })
+          end
+
+          nil
+
         "note_create" ->
           text = String.trim(params["text"] || "")
 
@@ -661,6 +693,7 @@ defmodule FateWeb.TableLive do
 
         {"entity_aspect_add", entity_id} ->
           description = String.trim(params["description"] || "")
+          role = params["role"] || "situation"
 
           if description != "" do
             Fate.Engine.append_event(socket.assigns.bookmark_id, %{
@@ -671,7 +704,7 @@ defmodule FateWeb.TableLive do
                 "target_id" => entity_id,
                 "target_type" => "entity",
                 "description" => description,
-                "role" => "situation"
+                "role" => role
               }
             })
           end
@@ -1059,7 +1092,12 @@ defmodule FateWeb.TableLive do
         <% end %>
 
         <%!-- === Table modal overlay === --%>
-        <.table_modal modal={@table_modal} state={@state} current_scene_id={@current_scene_id} />
+        <.table_modal
+          modal={@table_modal}
+          state={@state}
+          current_scene_id={@current_scene_id}
+          current_participant_id={@current_participant_id}
+        />
       <% end %>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".GmNotesResize">

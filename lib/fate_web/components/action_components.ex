@@ -56,11 +56,23 @@ defmodule FateWeb.ActionComponents do
     summary = compact_event_summary(assigns.event, assigns.state)
     draggable = assigns[:is_gm] && !assigns[:immutable] && !assigns[:is_observer]
 
+    my_ids = assigns[:my_entity_ids] || MapSet.new()
+    event = assigns.event
+    detail = event.detail || %{}
+
+    involves_me =
+      MapSet.size(my_ids) > 0 &&
+        (MapSet.member?(my_ids, event.target_id) ||
+           MapSet.member?(my_ids, event.actor_id) ||
+           MapSet.member?(my_ids, detail["entity_id"]) ||
+           MapSet.member?(my_ids, detail["target_id"]))
+
     assigns =
       assigns
       |> assign(:color, color)
       |> assign(:summary, summary)
       |> assign(:draggable, draggable)
+      |> assign(:involves_me, involves_me)
       |> assign_new(:immutable, fn -> false end)
       |> assign_new(:is_observer, fn -> false end)
       |> assign_new(:is_gm, fn -> false end)
@@ -73,7 +85,8 @@ defmodule FateWeb.ActionComponents do
         "group flex items-center gap-2 px-2 py-1 rounded transition text-sm event-row",
         if(@event.exchange_id, do: "ml-4 border-l-2 border-amber-700/20", else: ""),
         if(@immutable, do: "opacity-30", else: "hover:bg-amber-900/20"),
-        @draggable && "cursor-grab"
+        @draggable && "cursor-grab",
+        @involves_me && !@immutable && "bg-amber-800/15"
       ]}
       draggable={if(@draggable, do: "true", else: "false")}
       data-event-id={@event.id}
@@ -542,6 +555,7 @@ defmodule FateWeb.ActionComponents do
       options={[
         {"situation", "Situation"},
         {"boost", "Boost"},
+        {"consequence", "Consequence"},
         {"additional", "Additional"},
         {"high_concept", "High Concept"},
         {"trouble", "Trouble"}

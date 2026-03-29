@@ -625,6 +625,15 @@ defmodule FateWeb.TableComponents do
       >
         <.icon name="hero-tag" class="w-3.5 h-3.5" />
       </button>
+      <button
+        class="ring-item"
+        phx-click="ring_action"
+        phx-value-action="add_entity_note"
+        phx-value-entity-id={@entity.id}
+        data-tooltip="Add Note"
+      >
+        <.icon name="hero-pencil-square" class="w-3.5 h-3.5" />
+      </button>
       <%= if @is_gm do %>
         <button
           class="ring-item"
@@ -1026,93 +1035,26 @@ defmodule FateWeb.TableComponents do
     """
   end
 
+  def table_modal(%{modal: {modal_type, preselect_entity_id}} = assigns)
+      when modal_type in ["note_create", "note_create_for"] do
+    assigns = assign(assigns, :modal, "note_create")
+    table_modal_note(assigns, preselect_entity_id)
+  end
+
   def table_modal(%{modal: "note_create"} = assigns) do
+    participant_id = assigns[:current_participant_id]
     state = assigns[:state]
-    current_scene_id = assigns[:current_scene_id]
 
-    active_scene =
-      if state && current_scene_id,
-        do: Enum.find(state.scenes, &(&1.id == current_scene_id)),
-        else: nil
-
-    target_options =
-      if state do
-        scene_opts =
-          if active_scene,
-            do:
-              [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
-                Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end),
-            else: []
-
-        entity_opts =
-          state.entities
-          |> Map.values()
-          |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
-
-        scene_opts ++ entity_opts
-      else
-        []
+    default_entity_id =
+      if participant_id && state do
+        state.entities
+        |> Map.values()
+        |> Enum.find_value(fn e ->
+          if e.controller_id == participant_id, do: e.id
+        end)
       end
 
-    assigns = assign(assigns, :target_options, target_options)
-
-    ~H"""
-    <div
-      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
-      phx-window-keydown="close_table_modal"
-      phx-key="escape"
-    >
-      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl">
-        <h3
-          class="text-lg font-bold text-amber-100 mb-4"
-          style="font-family: 'Permanent Marker', cursive;"
-        >
-          Make a Note
-        </h3>
-        <form phx-submit="submit_table_modal" class="space-y-3">
-          <div>
-            <label class="block text-sm text-amber-200/70 mb-1">Note</label>
-            <textarea
-              name="text"
-              id="note-text-input"
-              rows="4"
-              required
-              phx-mounted={JS.focus()}
-              placeholder="What happened..."
-              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
-            />
-          </div>
-          <div>
-            <label class="block text-sm text-amber-200/70 mb-1">About (optional)</label>
-            <select
-              name="target_ref"
-              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
-            >
-              <option value="">General note</option>
-              <%= for {value, label} <- @target_options do %>
-                <option value={value}>{label}</option>
-              <% end %>
-            </select>
-          </div>
-          <div class="flex gap-2 pt-2">
-            <button
-              type="submit"
-              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
-            >
-              OK
-            </button>
-            <button
-              type="button"
-              phx-click="close_table_modal"
-              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-    """
+    table_modal_note(assigns, default_entity_id)
   end
 
   def table_modal(%{modal: {"entity_aspect_add", entity_id}} = assigns) do
@@ -1148,6 +1090,20 @@ defmodule FateWeb.TableComponents do
               autofocus
               class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
             />
+          </div>
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">Type</label>
+            <select
+              name="role"
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+            >
+              <option value="situation">Situation</option>
+              <option value="boost">Boost</option>
+              <option value="consequence">Consequence</option>
+              <option value="additional">Additional</option>
+              <option value="high_concept">High Concept</option>
+              <option value="trouble">Trouble</option>
+            </select>
           </div>
           <div class="flex gap-2 pt-2">
             <button
@@ -1494,6 +1450,100 @@ defmodule FateWeb.TableComponents do
     <div class={["rounded-lg border px-2 py-1.5", @color]}>
       <div class="text-base font-bold text-amber-100">{@value}</div>
       <div class="text-xs text-amber-200/70">{@label}</div>
+    </div>
+    """
+  end
+
+  defp table_modal_note(assigns, preselect_entity_id) do
+    state = assigns[:state]
+    current_scene_id = assigns[:current_scene_id]
+
+    active_scene =
+      if state && current_scene_id,
+        do: Enum.find(state.scenes, &(&1.id == current_scene_id)),
+        else: nil
+
+    target_options =
+      if state do
+        scene_opts =
+          if active_scene,
+            do:
+              [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
+                Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end),
+            else: []
+
+        entity_opts =
+          state.entities
+          |> Map.values()
+          |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
+
+        scene_opts ++ entity_opts
+      else
+        []
+      end
+
+    preselect_ref = if preselect_entity_id, do: "entity:#{preselect_entity_id}"
+
+    assigns =
+      assigns
+      |> assign(:target_options, target_options)
+      |> assign(:preselect_ref, preselect_ref)
+
+    ~H"""
+    <div
+      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+      phx-window-keydown="close_table_modal"
+      phx-key="escape"
+    >
+      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl">
+        <h3
+          class="text-lg font-bold text-amber-100 mb-4"
+          style="font-family: 'Permanent Marker', cursive;"
+        >
+          Make a Note
+        </h3>
+        <form phx-submit="submit_table_modal" class="space-y-3">
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">Note</label>
+            <textarea
+              name="text"
+              id="note-text-input"
+              rows="4"
+              required
+              phx-mounted={JS.focus()}
+              placeholder="What happened..."
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+            />
+          </div>
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">About (optional)</label>
+            <select
+              name="target_ref"
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+            >
+              <option value="">General note</option>
+              <%= for {value, label} <- @target_options do %>
+                <option value={value} selected={value == @preselect_ref}>{label}</option>
+              <% end %>
+            </select>
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button
+              type="submit"
+              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
+            >
+              OK
+            </button>
+            <button
+              type="button"
+              phx-click="close_table_modal"
+              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
     """
   end

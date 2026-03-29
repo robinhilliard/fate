@@ -917,6 +917,7 @@ defmodule FateWeb.ActionsLive do
 
         <%= if @log_tab == :events do %>
           <% boundary = bookmark_boundary_index(@events) %>
+          <% my_entity_ids = my_controlled_entity_ids(@state, @current_participant_id) %>
           <div
             class="flex-1 overflow-y-auto p-3 space-y-1"
             id="event-log"
@@ -935,6 +936,7 @@ defmodule FateWeb.ActionsLive do
                   is_observer={@is_observer}
                   is_gm={@is_gm}
                   invalid={MapSet.member?(@invalid_event_ids, event.id)}
+                  my_entity_ids={my_entity_ids}
                 />
               <% end %>
             <% end %>
@@ -1054,6 +1056,17 @@ defmodule FateWeb.ActionsLive do
       {:ok, bms} -> bms
       _ -> []
     end
+  end
+
+  defp my_controlled_entity_ids(nil, _), do: MapSet.new()
+  defp my_controlled_entity_ids(_, nil), do: MapSet.new()
+
+  defp my_controlled_entity_ids(state, participant_id) do
+    state.entities
+    |> Map.values()
+    |> Enum.filter(&(&1.controller_id == participant_id))
+    |> Enum.map(& &1.id)
+    |> MapSet.new()
   end
 
   defp load_events_for_role(bookmark_id, true = _is_gm) do
