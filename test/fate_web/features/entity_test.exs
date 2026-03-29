@@ -77,11 +77,16 @@ defmodule FateWeb.Features.EntityTest do
     entity_id = find_entity_id_by_name(session, "Removable NPC")
     assert entity_id != nil
 
+    Wallaby.Browser.execute_script(session, "window.__origConfirm = window.confirm; window.confirm = () => true;")
+
     session
     |> open_ring_menu(entity_id)
     |> click_ring_action(entity_id, "remove")
 
     :timer.sleep(2_000)
+
+    Wallaby.Browser.execute_script(session, "if (window.__origConfirm) window.confirm = window.__origConfirm;")
+
     refute_has(session, Query.text("Removable NPC"))
   end
 

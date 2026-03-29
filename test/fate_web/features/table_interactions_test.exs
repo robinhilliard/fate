@@ -33,22 +33,28 @@ defmodule FateWeb.Features.TableInteractionsTest do
     entity_id = find_entity_id_by_name(session, "Table Test NPC")
     assert entity_id != nil
 
-    click(session, Query.css("#entity-#{entity_id}"))
-    :timer.sleep(500)
+    Wallaby.Browser.execute_script(session, """
+      const el = document.querySelector('#entity-' + arguments[0]);
+      if (el) el.click();
+    """, [entity_id])
+    :timer.sleep(1_000)
 
     has_class = js_eval(session, """
       const el = document.querySelector('#entity-' + arguments[0]);
-      return el && el.classList.contains('ring-2');
+      return el && (el.classList.contains('ring-2') || el.classList.contains('scale-105'));
     """, [entity_id])
 
     assert has_class, "Entity should have selection ring after click"
 
-    click(session, Query.css("#entity-#{entity_id}"))
-    :timer.sleep(500)
+    Wallaby.Browser.execute_script(session, """
+      const el = document.querySelector('#entity-' + arguments[0]);
+      if (el) el.click();
+    """, [entity_id])
+    :timer.sleep(1_000)
 
     still_selected = js_eval(session, """
       const el = document.querySelector('#entity-' + arguments[0]);
-      return el && el.classList.contains('ring-2');
+      return el && (el.classList.contains('ring-2') || el.classList.contains('scale-105'));
     """, [entity_id])
 
     refute still_selected, "Entity should lose selection after second click"

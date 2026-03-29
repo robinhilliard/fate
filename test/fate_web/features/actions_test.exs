@@ -42,61 +42,37 @@ defmodule FateWeb.Features.ActionsTest do
   end
 
   feature "fate point spend creates event", %{session: session} do
-    session = setup_with_entity(session)
-
     session =
       session
+      |> setup_with_entity()
       |> open_action_palette()
       |> click(Query.css("#quick-fate_point_spend"))
       |> assert_has(Query.css("form[phx-submit='submit_modal']"))
-
-    Wallaby.Browser.execute_script(session, """
-      const sel = document.querySelector('select[name="entity_id"]');
-      if (sel) {
-        for (const opt of sel.options) {
-          if (opt.textContent.includes('Actions Entity')) { sel.value = opt.value; sel.dispatchEvent(new Event('change', {bubbles: true})); break; }
-        }
-      }
-    """)
-
-    session =
-      session
+      |> select_entity_in_modal("Actions Entity")
       |> click(Query.button("Confirm"))
 
     :timer.sleep(1_000)
 
     session
     |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))
-    |> assert_has(Query.text("fate point", count: :any, at: 0))
+    |> assert_has(Query.text("spends FP"))
   end
 
   feature "fate point earn creates event", %{session: session} do
-    session = setup_with_entity(session)
-
     session =
       session
+      |> setup_with_entity()
       |> open_action_palette()
       |> click(Query.css("#quick-fate_point_earn"))
       |> assert_has(Query.css("form[phx-submit='submit_modal']"))
-
-    Wallaby.Browser.execute_script(session, """
-      const sel = document.querySelector('select[name="entity_id"]');
-      if (sel) {
-        for (const opt of sel.options) {
-          if (opt.textContent.includes('Actions Entity')) { sel.value = opt.value; sel.dispatchEvent(new Event('change', {bubbles: true})); break; }
-        }
-      }
-    """)
-
-    session =
-      session
+      |> select_entity_in_modal("Actions Entity")
       |> click(Query.button("Confirm"))
 
     :timer.sleep(1_000)
 
     session
     |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))
-    |> assert_has(Query.text("fate point", count: :any, at: 0))
+    |> assert_has(Query.text("earns FP"))
   end
 
   feature "start exchange shows builder", %{session: session} do
@@ -105,9 +81,6 @@ defmodule FateWeb.Features.ActionsTest do
       |> join_as_gm()
       |> fork_bookmark("UI Testing")
       |> open_action_palette()
-
-    session =
-      session
       |> click(Query.css("#exchange-attack", count: :any, at: 0))
 
     :timer.sleep(1_000)
@@ -115,7 +88,6 @@ defmodule FateWeb.Features.ActionsTest do
     has_builder = Wallaby.Browser.has?(session, Query.text("Attack"))
 
     if has_builder do
-      # Cancel the exchange
       session
       |> click(Query.css("button[phx-click='cancel_build']", count: :any, at: 0))
 

@@ -20,28 +20,15 @@ defmodule FateWeb.Features.AspectTest do
     |> then(fn s -> :timer.sleep(1_000); s end)
   end
 
-  defp create_aspect_on_entity(session, entity_name, aspect_text) do
+  defp create_aspect_on_entity(session, _entity_name, aspect_text) do
     session
     |> open_actions()
     |> click(Query.css("button[phx-click='set_log_tab'][phx-value-tab='events']"))
     |> assert_has(Query.text("Action Palette"))
     |> click(Query.css("#quick-aspect_create"))
     |> assert_has(Query.css("form[phx-submit='submit_modal']"))
-    |> then(fn s ->
-      entity_id = find_entity_id_by_name(s, entity_name)
-      if entity_id do
-        Wallaby.Browser.execute_script(s, """
-          const sel = document.querySelector('select[name="target_ref"]');
-          if (sel) {
-            for (const opt of sel.options) {
-              if (opt.value.startsWith('entity:')) { sel.value = opt.value; sel.dispatchEvent(new Event('change', {bubbles: true})); break; }
-            }
-          }
-        """)
-      end
-      s
-    end)
-    |> fill_in(Query.css("input[name='description'], textarea[name='description']", count: :any, at: 0), with: aspect_text)
+    |> select_option_by_value_prefix("target_ref", "entity:")
+    |> fill_in(Query.css("input[name='description']"), with: aspect_text)
     |> click(Query.button("Confirm"))
     |> then(fn s -> :timer.sleep(1_000); s end)
   end
@@ -77,13 +64,12 @@ defmodule FateWeb.Features.AspectTest do
     :timer.sleep(2_000)
     assert_has(session, Query.text("Removable Aspect"))
 
-    # Click the remove button on the aspect (visible on hover, use JS)
-    run_script(session, """
+    Wallaby.Browser.execute_script(session, """
       const aspects = document.querySelectorAll('[id^="entity-aspect-"]');
       for (const a of aspects) {
         if (a.textContent.includes('Removable Aspect')) {
           const btn = a.querySelector('button[phx-click="remove_aspect"]');
-          if (btn) btn.click();
+          if (btn) { btn.style.opacity = '1'; btn.click(); }
           break;
         }
       }
@@ -105,22 +91,16 @@ defmodule FateWeb.Features.AspectTest do
       |> assert_has(Query.text("Action Palette"))
       |> click(Query.css("#quick-aspect_create"))
       |> assert_has(Query.css("form[phx-submit='submit_modal']"))
+      |> select_option_by_value_prefix("target_ref", "entity:")
 
-    # Select entity target and set hidden
     Wallaby.Browser.execute_script(gm, """
-      const sel = document.querySelector('select[name="target_ref"]');
-      if (sel) {
-        for (const opt of sel.options) {
-          if (opt.value.startsWith('entity:')) { sel.value = opt.value; sel.dispatchEvent(new Event('change', {bubbles: true})); break; }
-        }
-      }
       const hidden = document.querySelector('input[name="hidden"]');
-      if (hidden) { hidden.checked = true; hidden.dispatchEvent(new Event('change', {bubbles: true})); }
+      if (hidden) { hidden.checked = true; hidden.dispatchEvent(new Event('input', {bubbles: true})); }
     """)
 
     gm =
       gm
-      |> fill_in(Query.css("input[name='description'], textarea[name='description']", count: :any, at: 0), with: "Secret Aspect")
+      |> fill_in(Query.css("input[name='description']"), with: "Secret Aspect")
       |> click(Query.button("Confirm"))
 
     :timer.sleep(1_000)
@@ -134,10 +114,5 @@ defmodule FateWeb.Features.AspectTest do
     :timer.sleep(2_000)
 
     refute_has(player, Query.text("Secret Aspect"))
-  end
-
-  defp run_script(session, js, args \\ []) do
-    Wallaby.Browser.execute_script(session, js, args)
-    session
   end
 end

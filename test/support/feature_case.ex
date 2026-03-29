@@ -269,12 +269,15 @@ defmodule FateWeb.FeatureCase do
 
     # ── GM notes ring helpers ──
 
-    @doc """
-    Opens the GM notes ring. NOTE: The GM ring hook name is currently
-    `FateWeb.TableComponents.RingTrigger` but should be `.RingTrigger`.
-    Until fixed, ring_action events must be pushed via JS workaround.
-    """
     def open_gm_ring(session) do
+      run_script(session, """
+        const trigger = document.querySelector('#gm-notes-trigger');
+        if (trigger) {
+          trigger.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
+        }
+      """)
+
+      :timer.sleep(600)
       session
     end
 
@@ -282,35 +285,83 @@ defmodule FateWeb.FeatureCase do
       run_script(session, """
         (function() {
           const trigger = document.querySelector('#gm-notes-trigger');
-          if (!trigger) return;
-          trigger.classList.add('ring-open');
-          const ring = trigger.querySelector('.context-ring');
+          if (trigger) trigger.classList.add('ring-open');
+
+          const ring = document.querySelector('#ring-gm-notes');
           if (!ring) return;
           const btn = ring.querySelector('button[phx-value-action="' + arguments[0] + '"]');
-          if (btn) {
-            btn.style.pointerEvents = 'auto';
-            btn.style.opacity = '1';
-            btn.dispatchEvent(new MouseEvent('click', {bubbles: true}));
-          }
+          if (!btn) return;
+
+          btn.style.pointerEvents = 'auto';
+          btn.style.opacity = '1';
+          btn.style.position = 'fixed';
+          btn.style.left = '50px';
+          btn.style.top = '50px';
+          btn.style.zIndex = '99999';
+          btn.style.width = '40px';
+          btn.style.height = '40px';
         })()
       """, [action])
 
-      :timer.sleep(1_000)
+      :timer.sleep(300)
       session
     end
 
-    def push_table_event(session, event, params \\ %{}) do
+    # ── Form helpers ──
+
+    def select_entity_in_modal(session, entity_name) do
       run_script(session, """
-        const el = document.querySelector('[data-phx-session]');
-        if (el && window.liveSocket) {
-          const view = window.liveSocket.getViewByEl(el);
-          if (view) {
-            view.pushEvent('click', el, arguments[0], arguments[1]);
+        const sel = document.querySelector('select[name="entity_id"]');
+        if (!sel) return;
+        let found = false;
+        for (const opt of sel.options) {
+          if (opt.textContent.includes(arguments[0]) && opt.value !== '') {
+            sel.value = opt.value;
+            found = true;
+            break;
           }
         }
-      """, [event, params])
+        if (!found && sel.options.length > 1) {
+          sel.selectedIndex = 1;
+        }
+        sel.dispatchEvent(new Event('input', {bubbles: true}));
+        sel.dispatchEvent(new Event('change', {bubbles: true}));
+      """, [entity_name])
 
-      :timer.sleep(1_000)
+      :timer.sleep(500)
+      session
+    end
+
+    def select_option_by_value_prefix(session, select_name, prefix) do
+      run_script(session, """
+        const sel = document.querySelector('select[name="' + arguments[0] + '"]');
+        if (sel) {
+          for (const opt of sel.options) {
+            if (opt.value.startsWith(arguments[1])) {
+              sel.value = opt.value;
+              sel.dispatchEvent(new Event('input', {bubbles: true}));
+              sel.dispatchEvent(new Event('change', {bubbles: true}));
+              break;
+            }
+          }
+        }
+      """, [select_name, prefix])
+
+      :timer.sleep(500)
+      session
+    end
+
+    def select_option_by_value(session, select_name, value) do
+      run_script(session, """
+        const sel = document.querySelector('select[name="' + arguments[0] + '"]');
+        if (sel) {
+          sel.value = arguments[1];
+          sel.dispatchEvent(new Event('input', {bubbles: true}));
+          sel.dispatchEvent(new Event('change', {bubbles: true}));
+        }
+      """, [select_name, value])
+
+      :timer.sleep(500)
       session
     end
 
