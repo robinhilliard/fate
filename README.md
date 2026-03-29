@@ -53,7 +53,7 @@ Every game action -- creating a character, rolling dice, taking stress -- is rec
 | 31 | Invoke aspect (spend FP) | ✔ | ✔ | ✔ |
 | 32 | Compel aspect | ✔ | ✔ | ✔ |
 | | **Conflicts & Exchanges** | | | |
-| 33 | Roll dice (attack / defend / overcome / create advantage) | -- | ✔ | ✔ |
+| 33 | Roll dice (attack / defend / overcome / create advantage) | ✔ | ✔ | ✔ |
 | 34 | Resolve shifts | -- | ✔ | ✔ |
 | 35 | Apply stress | ✔ | ✔ | ✔ |
 | 36 | Take consequence | ✔ | ✔ | ✔ |
@@ -176,41 +176,58 @@ The app is built around an **event-sourced engine**: every game action is an imm
 ```
 lib/
 ├── fate/
-│   ├── engine.ex              # Event loading, state derivation, PubSub
+│   ├── application.ex            # OTP application supervision tree
+│   ├── engine.ex                 # Event loading, state derivation, PubSub
 │   ├── engine/
-│   │   ├── replay.ex          # Pure event replay: events → derived state
-│   │   └── state.ex           # Struct definitions for derived state
-│   ├── game.ex                # Ash domain (Event, Bookmark, Participant)
+│   │   ├── replay.ex             # Pure event replay: events → derived state
+│   │   └── state.ex              # Struct definitions for derived state
+│   ├── game.ex                   # Ash domain (Event, Bookmark, Participant)
 │   ├── game/
-│   │   ├── bookmarks.ex       # Bookmark lifecycle context
-│   │   ├── demo.ex            # Demo scenario seed data
-│   │   ├── bookmark.ex        # Ash resource
+│   │   ├── bookmarks.ex          # Bookmark lifecycle (fork, archive, leaf)
+│   │   ├── demo.ex               # Demo scenario seed data
+│   │   ├── bookmark.ex           # Ash resource
 │   │   ├── bookmark_participant.ex
-│   │   ├── event.ex           # Ash resource (37 event types)
-│   │   ├── events.ex          # Event creation helpers
+│   │   ├── event.ex              # Ash resource (37 event types)
+│   │   ├── events.ex             # Event reorder and delete operations
 │   │   └── participant.ex
-│   ├── mcp_server.ex          # MCP protocol handler for AI assistants
-│   ├── release.ex             # Release tasks (migrations without Mix)
-│   └── repo.ex                # Ecto/AshPostgres repo
+│   ├── mcp_server.ex             # MCP protocol handler for AI assistants
+│   ├── release.ex                # Release tasks (migrations without Mix)
+│   └── repo.ex                   # Ecto/AshPostgres repo
+├── fate_web.ex                   # Module entrypoint (html_helpers, verified_routes)
 ├── fate_web/
 │   ├── live/
-│   │   ├── table_live.ex      # Main tabletop view
-│   │   ├── actions_live.ex    # Action palette + exchange builder
-│   │   ├── branches_live.ex   # Bookmark management
-│   │   └── lobby_live.ex      # Role selection prompt + redirect
+│   │   ├── table_live.ex         # Main tabletop view
+│   │   ├── actions_live.ex       # Action palette + exchange builder
+│   │   ├── branches_live.ex      # Bookmark management
+│   │   └── lobby_live.ex         # Role selection prompt + redirect
 │   ├── components/
-│   │   ├── table_components.ex # Entity cards, aspect cards, rings, modals
-│   │   ├── core_components.ex  # Base Phoenix components
+│   │   ├── table_components.ex   # Entity cards, aspect cards, rings, modals
+│   │   ├── action_components.ex  # Action modals, event rows, entity select
+│   │   ├── exchange_components.ex # Exchange builder, action menu, step palette
+│   │   ├── core_components.ex    # Base Phoenix components
 │   │   └── layouts.ex
-│   └── helpers.ex             # Shared LiveView helpers
+│   └── helpers.ex                # Shared LiveView helpers
 ```
 
 ## Development
 
 ```bash
 mix precommit          # Compile (warnings-as-errors) + format + test
-mix test               # Run test suite
+mix test               # Run full suite (unit + browser tests)
+mix test test/fate/    # Run unit tests only (~0.3s)
 mix test --failed      # Re-run failures only
+```
+
+### Testing
+
+The project has two test layers:
+
+**Unit tests** (`test/fate/`) — Pure logic and database integration tests covering event replay, engine operations, bookmark lifecycle, and MCP server tools. Run in ~0.3 seconds.
+
+**Browser tests** (`test/fate_web/features/`) — Wallaby-based browser tests using ChromeDriver. Cover the full UI interaction surface: lobby, bookmarks, entity CRUD, scenes, aspects, skills, stunts, table interactions, spring layout, actions, and event log. Multi-session tests verify GM/player visibility. Require `chromedriver` on PATH.
+
+```bash
+SHOW_BROWSER=1 mix test test/fate_web/features/  # Watch browser tests run
 ```
 
 ## Fate SRD Attribution
