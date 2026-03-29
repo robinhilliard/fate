@@ -616,6 +616,15 @@ defmodule FateWeb.TableComponents do
           <.icon name="hero-x-circle" class="w-3.5 h-3.5" />
         </button>
       <% end %>
+      <button
+        class="ring-item"
+        phx-click="ring_action"
+        phx-value-action="add_entity_aspect"
+        phx-value-entity-id={@entity.id}
+        data-tooltip="Add Aspect"
+      >
+        <.icon name="hero-tag" class="w-3.5 h-3.5" />
+      </button>
       <%= if @is_gm do %>
         <button
           class="ring-item"
@@ -1091,6 +1100,61 @@ defmodule FateWeb.TableComponents do
               class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
             >
               OK
+            </button>
+            <button
+              type="button"
+              phx-click="close_table_modal"
+              class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+  end
+
+  def table_modal(%{modal: {"entity_aspect_add", entity_id}} = assigns) do
+    entity =
+      if assigns[:state],
+        do: Map.get(assigns.state.entities, entity_id),
+        else: nil
+
+    entity_name = if entity, do: entity.name, else: "entity"
+    assigns = assign(assigns, :entity_name, entity_name)
+
+    ~H"""
+    <div
+      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+      phx-window-keydown="close_table_modal"
+      phx-key="escape"
+    >
+      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl">
+        <h3
+          class="text-lg font-bold text-amber-100 mb-4"
+          style="font-family: 'Permanent Marker', cursive;"
+        >
+          Add Aspect to {@entity_name}
+        </h3>
+        <form phx-submit="submit_table_modal" class="space-y-3">
+          <div>
+            <label class="block text-sm text-amber-200/70 mb-1">Aspect</label>
+            <input
+              type="text"
+              name="description"
+              placeholder="On Fire!"
+              required
+              autofocus
+              class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+            />
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button
+              type="submit"
+              class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
+            >
+              Add
             </button>
             <button
               type="button"

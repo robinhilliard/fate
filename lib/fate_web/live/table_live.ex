@@ -353,6 +353,14 @@ defmodule FateWeb.TableLive do
     {:noreply, assign(socket, :selection, selection)}
   end
 
+  def handle_event(
+        "ring_action",
+        %{"action" => "add_entity_aspect", "entity-id" => entity_id},
+        socket
+      ) do
+    {:noreply, assign(socket, :table_modal, {"entity_aspect_add", entity_id})}
+  end
+
   def handle_event("ring_action", %{"action" => action, "entity-id" => entity_id}, socket) do
     branch_id = socket.assigns.bookmark_id
 
@@ -642,6 +650,25 @@ defmodule FateWeb.TableLive do
               target_id: target_id,
               description: text,
               detail: detail
+            })
+          end
+
+          nil
+
+        {"entity_aspect_add", entity_id} ->
+          description = String.trim(params["description"] || "")
+
+          if description != "" do
+            Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+              type: :aspect_create,
+              target_id: entity_id,
+              description: "Add aspect: #{description}",
+              detail: %{
+                "target_id" => entity_id,
+                "target_type" => "entity",
+                "description" => description,
+                "role" => "situation"
+              }
             })
           end
 
