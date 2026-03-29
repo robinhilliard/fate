@@ -55,13 +55,7 @@ defmodule FateWeb.Features.EventLogTest do
       click(session, Query.css("button[phx-click='delete_event']", count: :any, at: 0))
       :timer.sleep(2_000)
 
-      # After deleting, the event should be gone
-      events_text =
-        Wallaby.Browser.execute_script(session, """
-          return document.querySelector('#event-log')?.textContent || '';
-        """)
-
-      # Just verify the log still renders
+      # Verify the log still renders
       assert_has(session, Query.css("#event-log"))
     else
       IO.puts("INFO: No delete buttons found — events may be immutable")

@@ -323,25 +323,20 @@ defmodule FateWeb.FeatureCase do
       run_script(session, """
         (function() {
           const trigger = document.querySelector('#gm-notes-trigger');
-          if (trigger) trigger.classList.add('ring-open');
+          if (!trigger) return;
 
-          const ring = document.querySelector('#ring-gm-notes');
-          if (!ring) return;
-          const btn = ring.querySelector('button[phx-value-action="' + arguments[0] + '"]');
-          if (!btn) return;
+          trigger.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
 
-          btn.style.pointerEvents = 'auto';
-          btn.style.opacity = '1';
-          btn.style.position = 'fixed';
-          btn.style.left = '50px';
-          btn.style.top = '50px';
-          btn.style.zIndex = '99999';
-          btn.style.width = '40px';
-          btn.style.height = '40px';
+          setTimeout(function() {
+            const ring = document.querySelector('#ring-gm-notes');
+            if (!ring) return;
+            const btn = ring.querySelector('button[phx-value-action="' + arguments[0] + '"]');
+            if (btn) btn.click();
+          }, 300);
         })()
       """, [action])
 
-      :timer.sleep(300)
+      :timer.sleep(1_000)
       session
     end
 

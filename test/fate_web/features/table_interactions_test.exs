@@ -22,7 +22,7 @@ defmodule FateWeb.Features.TableInteractionsTest do
     |> then(fn s -> :timer.sleep(1_000); s end)
   end
 
-  defp js_eval(session, js, args \\ []) do
+  defp js_eval(session, js, args) do
     {:ok, result} = Wallaby.WebdriverClient.execute_script(session, js, args)
     result
   end

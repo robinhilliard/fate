@@ -754,7 +754,7 @@ defmodule FateWeb.TableLive do
                 class="ring-trigger"
                 style="position: absolute; top: -0.375rem; right: -0.375rem; z-index: 10;"
                 id="gm-notes-trigger"
-                phx-hook=".RingTrigger"
+                phx-hook="FateWeb.TableComponents.RingTrigger"
               >
                 <div class="w-5 h-5 rounded-full bg-amber-700 hover:bg-amber-600 cursor-pointer flex items-center justify-center transition">
                   <.icon name="hero-cog-6-tooth" class="w-3 h-3 text-amber-200" />
