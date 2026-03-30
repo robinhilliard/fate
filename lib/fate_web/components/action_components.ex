@@ -675,12 +675,15 @@ defmodule FateWeb.ActionComponents do
       required={true}
       value={@fd["name"]}
     />
-    <.text_input
-      name="scene_description"
-      label="Description"
-      placeholder="A brief framing of the scene"
-      value={@fd["scene_description"]}
-    />
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Description</label>
+      <textarea
+        name="scene_description"
+        placeholder="A brief framing of the scene"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+        rows="3"
+      >{@fd["scene_description"]}</textarea>
+    </div>
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
       <textarea
@@ -1090,12 +1093,15 @@ defmodule FateWeb.ActionComponents do
       </select>
     </div>
     <.text_input name="name" label="Name" value={@s_name} placeholder="Scene name" />
-    <.text_input
-      name="scene_description"
-      label="Description"
-      value={@s_desc}
-      placeholder="Scene description"
-    />
+    <div>
+      <label class="block text-sm text-amber-200/70 mb-1">Description</label>
+      <textarea
+        name="scene_description"
+        placeholder="Scene description"
+        class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+        rows="3"
+      >{@s_desc}</textarea>
+    </div>
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
       <textarea

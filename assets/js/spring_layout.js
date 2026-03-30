@@ -296,12 +296,12 @@ export const SpringLayout = {
       }
     }
 
-    if (anchor.startsWith("entity-")) {
-      const parentNode = this.nodes.get(anchor)
-      if (parentNode && parentNode.initialized) {
+    if (anchor.startsWith("entity-") || anchor.startsWith("zone-")) {
+      const targetNode = this.nodes.get(anchor)
+      if (targetNode && targetNode.initialized) {
         return {
-          x: parentNode.x + parentNode.width / 2,
-          y: parentNode.y + parentNode.height / 2,
+          x: targetNode.x + targetNode.width / 2,
+          y: targetNode.y + targetNode.height / 2,
         }
       }
       const fallback = callerNode?.el?.dataset?.anchorFallback || "centre"
@@ -387,10 +387,10 @@ export const SpringLayout = {
       node.initialized = true
     })
 
-    // Pass 2: init free nodes (non-child entities first, so parents are positioned)
+    // Pass 2: init free nodes (skip node-anchored elements so targets get positioned first)
     for (const [, node] of this.nodes) {
       if (node.initialized || node.onBorder) continue
-      if (node.anchor.startsWith("entity-")) continue
+      if (node.anchor.startsWith("entity-") || node.anchor.startsWith("zone-")) continue
 
       if (node.anchor.startsWith("controller-")) {
         const controllerId = node.el.dataset.controllerId
@@ -420,7 +420,7 @@ export const SpringLayout = {
       node.initialized = true
     }
 
-    // Pass 3: init child entities (parents are now positioned)
+    // Pass 3: init node-anchored elements (targets are now positioned)
     for (const [, node] of this.nodes) {
       if (node.initialized || node.onBorder) continue
 
@@ -566,7 +566,6 @@ export const SpringLayout = {
         }
       }
 
-      // Bounding-box repulsion (all elements repel each other)
       for (const other of nodeList) {
         if (other.id === node.id || other === this.dragging?.node) continue
 
@@ -592,9 +591,14 @@ export const SpringLayout = {
       if (node.y + node.height > h - EDGE_MARGIN)
         fy -= Math.min((node.y + node.height - (h - EDGE_MARGIN)) * 0.1, MAX_FORCE)
 
-      const nodeDamping = isPinned ? DAMPING * 0.5 : DAMPING
-      node.vx = (node.vx + fx) * nodeDamping
-      node.vy = (node.vy + fy) * nodeDamping
+      if (isPinned) {
+        node.vx = 0
+        node.vy = 0
+        continue
+      }
+
+      node.vx = (node.vx + fx) * DAMPING
+      node.vy = (node.vy + fy) * DAMPING
       node.vx = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, node.vx))
       node.vy = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, node.vy))
       if (Math.abs(node.vx) < MIN_VELOCITY) node.vx = 0

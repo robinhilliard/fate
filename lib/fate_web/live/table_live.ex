@@ -1023,35 +1023,6 @@ defmodule FateWeb.TableLive do
                 {zone.name}
               </div>
 
-              <%!-- Zone aspects --%>
-              <%= for aspect <- visible_aspects(zone.aspects, @is_gm) do %>
-                <div class={[
-                  "group/za text-xs px-1 py-0.5 rounded mb-1 flex items-center gap-1",
-                  aspect_style(aspect),
-                  aspect.hidden && "opacity-50"
-                ]}>
-                  <span
-                    class="flex-1 text-gray-900"
-                    style="font-family: 'Permanent Marker', cursive; font-size: 0.65rem;"
-                  >
-                    {aspect.description}
-                  </span>
-                  <%= if @is_gm do %>
-                    <button
-                      phx-click="toggle_scene_aspect_visibility"
-                      phx-value-aspect-id={aspect.id}
-                      class="opacity-0 group-hover/za:opacity-100 transition-opacity text-gray-500 hover:text-gray-700"
-                      title={if(aspect.hidden, do: "Reveal", else: "Hide")}
-                    >
-                      <.icon
-                        name={if(aspect.hidden, do: "hero-eye", else: "hero-eye-slash")}
-                        class="w-3 h-3"
-                      />
-                    </button>
-                  <% end %>
-                </div>
-              <% end %>
-
               <%!-- Entity tokens in this zone --%>
               <div class="flex flex-col gap-1 mt-1">
                 <%= for entity <- entities_in_zone(@state, zone.id) do %>
@@ -1073,14 +1044,15 @@ defmodule FateWeb.TableLive do
           </div>
         <% end %>
 
-        <%!-- === Scene aspects — anchored to scene === --%>
-        <%= for aspect <- scene_aspects(@state, @is_gm, @current_scene_id) do %>
+        <%!-- === Scene aspects — anchored to scene or zone === --%>
+        <%= for {aspect, zone_id} <- scene_aspects(@state, @is_gm, @current_scene_id) do %>
           <div
             class={[
               "absolute spring-element",
               aspect.hidden && "opacity-40 hover:opacity-70 transition-opacity duration-300"
             ]}
-            data-anchor="centre"
+            data-anchor={if(zone_id, do: "zone-#{zone_id}", else: "centre")}
+            data-anchor-fallback="centre"
             data-element-id={"aspect-#{aspect.id}"}
             phx-mounted={JS.transition("entity-warp-in", time: 1000)}
           >
@@ -1272,8 +1244,15 @@ defmodule FateWeb.TableLive do
     state.scenes
     |> Enum.filter(&(&1.id == scene_id))
     |> Enum.flat_map(fn scene ->
-      scene.aspects ++ Enum.flat_map(scene.zones, & &1.aspects)
+      scene_level = Enum.map(scene.aspects, &{&1, nil})
+
+      zone_level =
+        Enum.flat_map(scene.zones, fn zone ->
+          if zone.hidden and not is_gm, do: [], else: Enum.map(zone.aspects, &{&1, zone.id})
+        end)
+
+      scene_level ++ zone_level
     end)
-    |> Enum.filter(fn aspect -> is_gm || !aspect.hidden end)
+    |> Enum.filter(fn {aspect, _zone_id} -> is_gm || !aspect.hidden end)
   end
 end

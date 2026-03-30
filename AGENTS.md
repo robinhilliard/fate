@@ -2,7 +2,7 @@ This is a web application written using the Phoenix web framework.
 
 ## Project guidelines
 
-- Use `mix precommit` alias when you are done with all changes and fix any pending issues
+- **Do NOT run UI/feature tests** (`test/fate_web/features/`) or `mix precommit` unless the user explicitly asks you to. These tests are slow (15–20 min) and must only be run on direct user request. Instead, verify changes with `mix compile --warnings-as-errors` and non-UI unit tests only
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
 ### Project-specific conventions

@@ -761,10 +761,10 @@ defmodule FateWeb.TableComponents do
           </div>
           <div>
             <label class="block text-sm text-amber-200/70 mb-1">Description</label>
-            <input
-              type="text"
+            <textarea
               name="scene_description"
               placeholder="A brief framing of the scene"
+              rows="3"
               class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
             />
           </div>
