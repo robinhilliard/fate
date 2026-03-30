@@ -738,10 +738,7 @@ defmodule FateWeb.TableComponents do
 
   def table_modal(%{modal: "scene_start"} = assigns) do
     ~H"""
-    <div
-      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
-      phx-click="close_table_modal"
-    >
+    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
       <div
         class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl"
         phx-click-away="close_table_modal"
@@ -803,10 +800,7 @@ defmodule FateWeb.TableComponents do
 
   def table_modal(%{modal: "zone_create"} = assigns) do
     ~H"""
-    <div
-      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
-      phx-click="close_table_modal"
-    >
+    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
       <div
         class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl"
         phx-click-away="close_table_modal"
@@ -858,10 +852,7 @@ defmodule FateWeb.TableComponents do
     assigns = assign(assigns, :active_scenes, active_scenes)
 
     ~H"""
-    <div
-      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
-      phx-click="close_table_modal"
-    >
+    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
       <div
         class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl"
         phx-click-away="close_table_modal"
@@ -906,10 +897,7 @@ defmodule FateWeb.TableComponents do
 
   def table_modal(%{modal: {"stunt_add", _entity_id}} = assigns) do
     ~H"""
-    <div
-      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
-      phx-click="close_table_modal"
-    >
+    <div class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
       <div
         class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 shadow-2xl"
         phx-click-away="close_table_modal"
@@ -1130,7 +1118,6 @@ defmodule FateWeb.TableComponents do
     ~H"""
     <div
       class="fixed inset-0 z-[300] flex items-center justify-center bg-black/70"
-      phx-click="close_table_modal"
       phx-window-keydown="close_table_modal"
       phx-key="escape"
     >
