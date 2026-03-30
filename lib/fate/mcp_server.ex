@@ -9,6 +9,13 @@ defmodule Fate.McpServer do
   require Ash.Query
   alias Fate.Engine
 
+  @capabilities %{
+    "tools" => %{},
+    "resources" => %{"subscribe" => true, "listChanged" => true}
+  }
+
+  def get_capabilities, do: @capabilities
+
   def handle_tool_call(name, args, _state) do
     case handle_call_tool(name, args, %{bookmark_id: find_active_bookmark()}) do
       {:ok, content, _new_state} -> {:ok, content}
@@ -43,12 +50,15 @@ defmodule Fate.McpServer do
      %{
        name: "fateble",
        version: "0.1.0",
-       capabilities: %{
-         tools: %{},
-         resources: %{subscribe: true, listChanged: true}
-       }
+       capabilities: @capabilities
      }, state}
   end
+
+  @impl true
+  def handle_subscribe_resource(_uri, state), do: {:ok, state}
+
+  @impl true
+  def handle_unsubscribe_resource(_uri, state), do: {:ok, state}
 
   @impl true
   def handle_list_tools(_cursor, state) do

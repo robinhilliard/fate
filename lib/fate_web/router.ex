@@ -34,4 +34,9 @@ defmodule FateWeb.Router do
       sse_enabled: true,
       cors_enabled: true
   end
+
+  scope "/.well-known" do
+    pipe_through :api
+    get "/*path", FateWeb.WellKnownController, :not_found
+  end
 end
