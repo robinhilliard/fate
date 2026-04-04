@@ -8,6 +8,7 @@ defmodule Fate.McpServer do
 
   require Ash.Query
   alias Fate.Engine
+  alias Fate.Engine.Replay
 
   @capabilities %{
     "tools" => %{},
@@ -1264,10 +1265,25 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("remove_aspect", %{"aspect_id" => aspect_id}, state) do
+    detail =
+      case Engine.derive_state(state.bookmark_id) do
+        {:ok, derived} ->
+          case Replay.find_aspect_container(derived, aspect_id) do
+            {:ok, tt, tid} ->
+              %{"aspect_id" => aspect_id, "target_type" => tt, "target_id" => tid}
+
+            :error ->
+              %{"aspect_id" => aspect_id}
+          end
+
+        _ ->
+          %{"aspect_id" => aspect_id}
+      end
+
     case Engine.append_event(state.bookmark_id, %{
            type: :aspect_remove,
            description: "Remove aspect",
-           detail: %{"aspect_id" => aspect_id}
+           detail: detail
          }) do
       {:ok, _, _} -> {:ok, [%{type: "text", text: "Aspect removed"}], state}
       {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
@@ -1290,6 +1306,18 @@ defmodule Fate.McpServer do
   def handle_call_tool("modify_aspect", %{"aspect_id" => aspect_id} = args, state) do
     detail =
       pick_present_keys(%{"aspect_id" => aspect_id}, args, ~w(description hidden free_invokes))
+
+    detail =
+      case Engine.derive_state(state.bookmark_id) do
+        {:ok, derived} ->
+          case Replay.find_aspect_container(derived, aspect_id) do
+            {:ok, tt, tid} -> Map.merge(detail, %{"target_type" => tt, "target_id" => tid})
+            :error -> detail
+          end
+
+        _ ->
+          detail
+      end
 
     case Engine.append_event(state.bookmark_id, %{
            type: :aspect_modify,

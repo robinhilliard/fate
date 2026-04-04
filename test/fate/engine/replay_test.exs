@@ -146,6 +146,41 @@ defmodule Fate.Engine.ReplayTest do
       assert aspect.hidden == true
     end
 
+    test "aspect_modify with target_type only touches that container" do
+      {entity_id, create} = entity_create("Hero")
+      {scene_id, scene} = scene_start("Fight")
+      {asp_entity, add_ent} = aspect_create(entity_id, "Tough", target_type: "entity")
+      {_asp_scene, add_scene} = aspect_create(scene_id, "Dark", target_type: "scene")
+
+      modify_entity =
+        build_event(:aspect_modify, %{
+          "aspect_id" => asp_entity,
+          "hidden" => true,
+          "target_type" => "entity",
+          "target_id" => entity_id
+        })
+
+      state = Replay.derive("bm-1", [create, scene, add_ent, add_scene, modify_entity])
+
+      assert hd(state.entities[entity_id].aspects).hidden == true
+      refute hd(hd(state.scenes).aspects).hidden
+    end
+
+    test "aspect_remove with target_type only touches that container" do
+      {entity_id, create} = entity_create("Hero")
+      {asp_entity, add_ent} = aspect_create(entity_id, "Tmp", target_type: "entity")
+
+      remove =
+        build_event(:aspect_remove, %{
+          "aspect_id" => asp_entity,
+          "target_type" => "entity",
+          "target_id" => entity_id
+        })
+
+      state = Replay.derive("bm-1", [create, add_ent, remove])
+      assert state.entities[entity_id].aspects == []
+    end
+
     test "aspect_remove removes aspect from entity" do
       {entity_id, create} = entity_create("Target")
       {aspect_id, add_aspect} = aspect_create(entity_id, "Temporary")
@@ -267,6 +302,74 @@ defmodule Fate.Engine.ReplayTest do
 
       state = Replay.derive("bm-1", [create, spend, earn])
       assert state.entities[entity_id].fate_points == 4
+    end
+  end
+
+  describe "event_entity_refs/1 and event_matches_selected_entities?/2" do
+    test "entity_modify refs target entity" do
+      ev =
+        build_event(:entity_modify, %{"entity_id" => "e1", "name" => "X"},
+          target_id: "e1"
+        )
+
+      assert MapSet.equal?(Replay.event_entity_refs(ev), MapSet.new(["e1"]))
+      assert Replay.event_matches_selected_entities?(ev, MapSet.new(["e1"]))
+      refute Replay.event_matches_selected_entities?(ev, MapSet.new(["other"]))
+    end
+
+    test "aspect_create on entity refs that entity" do
+      ev =
+        build_event(:aspect_create, %{
+          "target_type" => "entity",
+          "target_id" => "ent-a",
+          "aspect_id" => Ash.UUID.generate(),
+          "description" => "Hi"
+        })
+
+      assert Replay.event_matches_selected_entities?(ev, MapSet.new(["ent-a"]))
+      refute Replay.event_matches_selected_entities?(ev, MapSet.new(["ent-b"]))
+    end
+
+    test "aspect_modify with entity target refs entity" do
+      ev =
+        build_event(:aspect_modify, %{
+          "aspect_id" => "asp",
+          "hidden" => true,
+          "target_type" => "entity",
+          "target_id" => "e2"
+        })
+
+      assert Replay.event_matches_selected_entities?(ev, MapSet.new(["e2"]))
+    end
+
+    test "scene_start has no entity refs" do
+      {_, ev} = scene_start("X")
+      assert Replay.event_entity_refs(ev) == MapSet.new()
+      refute Replay.event_matches_selected_entities?(ev, MapSet.new(["any"]))
+    end
+
+    test "note targeting entity refs that entity" do
+      ev =
+        build_event(:note, %{"target_type" => "entity", "target_id" => "n1", "text" => "Hi"})
+
+      assert Replay.event_matches_selected_entities?(ev, MapSet.new(["n1"]))
+    end
+  end
+
+  describe "find_aspect_container/2" do
+    test "returns entity when aspect is on an entity" do
+      {eid, create} = entity_create("X")
+      {aid, add} = aspect_create(eid, "A", target_type: "entity")
+      state = Replay.derive("bm-1", [create, add])
+      assert {:ok, "entity", ^eid} = Replay.find_aspect_container(state, aid)
+    end
+
+    test "returns zone when aspect is on a zone" do
+      {sid, scene} = scene_start("S")
+      {zid, zone} = zone_create(sid, "Z")
+      {aid, add} = aspect_create(zid, "Zasp", target_type: "zone")
+      state = Replay.derive("bm-1", [scene, zone, add])
+      assert {:ok, "zone", ^zid} = Replay.find_aspect_container(state, aid)
     end
   end
 

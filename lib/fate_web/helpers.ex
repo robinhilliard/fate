@@ -53,4 +53,28 @@ defmodule FateWeb.Helpers do
       )
     end
   end
+
+  @doc """
+  PubSub topic for table ↔ panel selection sync (`{:selection_updated, list}`).
+  """
+  def selection_topic(bookmark_id, participant_id)
+      when is_binary(bookmark_id) and is_binary(participant_id) do
+    "selection:#{bookmark_id}:#{participant_id}"
+  end
+
+  @doc """
+  Broadcasts selection to all subscribers (including other LiveViews for the same participant).
+  """
+  def broadcast_selection(socket, selection) do
+    bid = socket.assigns.bookmark_id
+    pid = socket.assigns.current_participant_id
+
+    if bid && pid do
+      Phoenix.PubSub.broadcast(
+        Fate.PubSub,
+        selection_topic(bid, pid),
+        {:selection_updated, selection}
+      )
+    end
+  end
 end

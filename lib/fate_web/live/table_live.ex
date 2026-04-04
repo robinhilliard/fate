@@ -2,6 +2,7 @@ defmodule FateWeb.TableLive do
   use FateWeb, :live_view
 
   alias Fate.Engine
+  alias Fate.Engine.Replay
   alias Fate.Game.Bookmarks
 
   import FateWeb.ActionHelpers, only: [maybe_put_int: 3, put_non_empty: 3]
@@ -135,7 +136,12 @@ defmodule FateWeb.TableLive do
       type: :aspect_remove,
       target_id: entity_id,
       description: "Remove aspect: #{desc}",
-      detail: %{"aspect_id" => aspect_id, "description" => desc}
+      detail: %{
+        "aspect_id" => aspect_id,
+        "description" => desc,
+        "target_type" => "entity",
+        "target_id" => entity_id
+      }
     })
 
     {:noreply, socket}
@@ -145,10 +151,24 @@ defmodule FateWeb.TableLive do
     aspect = find_scene_aspect(socket.assigns.state, aspect_id)
     desc = if aspect, do: aspect.description, else: "aspect"
 
+    detail =
+      case Replay.find_aspect_container(socket.assigns.state, aspect_id) do
+        {:ok, tt, tid} ->
+          %{
+            "aspect_id" => aspect_id,
+            "description" => desc,
+            "target_type" => tt,
+            "target_id" => tid
+          }
+
+        :error ->
+          %{"aspect_id" => aspect_id, "description" => desc}
+      end
+
     Fate.Engine.append_event(socket.assigns.bookmark_id, %{
       type: :aspect_remove,
       description: "Remove aspect: #{desc}",
-      detail: %{"aspect_id" => aspect_id, "description" => desc}
+      detail: detail
     })
 
     {:noreply, socket}
@@ -379,15 +399,14 @@ defmodule FateWeb.TableLive do
         socket.assigns.selection ++ [item]
       end
 
-    if socket.assigns.bookmark_id do
-      Phoenix.PubSub.broadcast(
-        Fate.PubSub,
-        "selection:#{socket.assigns.bookmark_id}:#{socket.assigns.current_participant_id}",
-        {:selection_updated, selection}
-      )
-    end
+    FateWeb.Helpers.broadcast_selection(socket, selection)
 
     {:noreply, assign(socket, :selection, selection)}
+  end
+
+  def handle_event("clear_selection", _params, socket) do
+    FateWeb.Helpers.broadcast_selection(socket, [])
+    {:noreply, assign(socket, :selection, [])}
   end
 
   def handle_event(
@@ -600,10 +619,24 @@ defmodule FateWeb.TableLive do
       parent_name = if scene, do: scene.name, else: "scene"
       action = if aspect.hidden, do: "Reveal", else: "Hide"
 
+      detail =
+        case Replay.find_aspect_container(socket.assigns.state, aspect_id) do
+          {:ok, tt, tid} ->
+            %{
+              "aspect_id" => aspect_id,
+              "hidden" => !aspect.hidden,
+              "target_type" => tt,
+              "target_id" => tid
+            }
+
+          :error ->
+            %{"aspect_id" => aspect_id, "hidden" => !aspect.hidden}
+        end
+
       Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :aspect_modify,
         description: "#{action} #{parent_name}: #{aspect.description}",
-        detail: %{"aspect_id" => aspect_id, "hidden" => !aspect.hidden}
+        detail: detail
       })
     end
 
@@ -623,8 +656,14 @@ defmodule FateWeb.TableLive do
 
       Fate.Engine.append_event(socket.assigns.bookmark_id, %{
         type: :aspect_modify,
+        target_id: entity_id,
         description: "#{action} #{entity.name}: #{aspect.description}",
-        detail: %{"aspect_id" => aspect_id, "hidden" => !aspect.hidden}
+        detail: %{
+          "aspect_id" => aspect_id,
+          "hidden" => !aspect.hidden,
+          "target_type" => "entity",
+          "target_id" => entity_id
+        }
       })
     end
 
@@ -850,6 +889,12 @@ defmodule FateWeb.TableLive do
         data-scene-key={@bookmark_id || "default"}
         data-scene-id={@current_scene_id || "none"}
       >
+      <div
+        id="table-felt-clear-selection"
+        class="absolute inset-0 z-0"
+        phx-click="clear_selection"
+        title="Click to clear selection"
+      />
       <%= if @splash_visible do %>
         <div
           id="splash"
@@ -1482,8 +1527,14 @@ defmodule FateWeb.TableLive do
         unless aspect.hidden do
           Fate.Engine.append_event(branch_id, %{
             type: :aspect_modify,
+            target_id: entity_id,
             description: "Hide #{entity.name}: #{aspect.description}",
-            detail: %{"aspect_id" => aspect.id, "hidden" => true}
+            detail: %{
+              "aspect_id" => aspect.id,
+              "hidden" => true,
+              "target_type" => "entity",
+              "target_id" => entity_id
+            }
           })
         end
       end)

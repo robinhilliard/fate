@@ -268,8 +268,38 @@ defmodule Fate.Engine.Replay do
   defp apply_aspect_modify(event, state) do
     detail = event.detail || %{}
     aspect_id = detail["aspect_id"]
+    target_type = detail["target_type"]
+    target_id = detail["target_id"]
 
-    update_fn = fn aspect ->
+    update_fn = aspect_modify_fn(aspect_id, detail)
+
+    if is_binary(target_type) and is_binary(target_id) do
+      case target_type do
+        "entity" ->
+          update_entity(state, target_id, fn entity ->
+            %{entity | aspects: Enum.map(entity.aspects, update_fn)}
+          end)
+
+        "scene" ->
+          update_scene(state, target_id, fn scene ->
+            %{scene | aspects: Enum.map(scene.aspects, update_fn)}
+          end)
+
+        "zone" ->
+          update_zone(state, target_id, fn zone ->
+            %{zone | aspects: Enum.map(zone.aspects, update_fn)}
+          end)
+
+        _ ->
+          apply_aspect_modify_legacy(state, aspect_id, update_fn)
+      end
+    else
+      apply_aspect_modify_legacy(state, aspect_id, update_fn)
+    end
+  end
+
+  defp aspect_modify_fn(aspect_id, detail) do
+    fn aspect ->
       if aspect.id == aspect_id do
         aspect
         |> maybe_put(:hidden, detail["hidden"])
@@ -279,7 +309,9 @@ defmodule Fate.Engine.Replay do
         aspect
       end
     end
+  end
 
+  defp apply_aspect_modify_legacy(state, _aspect_id, update_fn) do
     state
     |> update_all_entities(fn entity ->
       %{entity | aspects: Enum.map(entity.aspects, update_fn)}
@@ -297,7 +329,35 @@ defmodule Fate.Engine.Replay do
   defp apply_aspect_remove(event, state) do
     detail = event.detail || %{}
     aspect_id = detail["aspect_id"]
+    target_type = detail["target_type"]
+    target_id = detail["target_id"]
 
+    if is_binary(target_type) and is_binary(target_id) do
+      case target_type do
+        "entity" ->
+          update_entity(state, target_id, fn entity ->
+            %{entity | aspects: Enum.reject(entity.aspects, &(&1.id == aspect_id))}
+          end)
+
+        "scene" ->
+          update_scene(state, target_id, fn scene ->
+            %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
+          end)
+
+        "zone" ->
+          update_zone(state, target_id, fn zone ->
+            %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
+          end)
+
+        _ ->
+          apply_aspect_remove_legacy(state, aspect_id)
+      end
+    else
+      apply_aspect_remove_legacy(state, aspect_id)
+    end
+  end
+
+  defp apply_aspect_remove_legacy(state, aspect_id) do
     state
     |> update_all_entities(fn entity ->
       %{entity | aspects: Enum.reject(entity.aspects, &(&1.id == aspect_id))}
@@ -764,4 +824,116 @@ defmodule Fate.Engine.Replay do
   defp severity_to_shifts("severe"), do: 6
   defp severity_to_shifts("extreme"), do: 8
   defp severity_to_shifts(_), do: 2
+
+  @doc """
+  Finds which container holds an aspect. Returns `{:ok, target_type, target_id}` or `:error`.
+  """
+  def find_aspect_container(%DerivedState{} = state, aspect_id) when is_binary(aspect_id) do
+    entity_hit =
+      Enum.find_value(state.entities, fn {eid, entity} ->
+        if Enum.any?(entity.aspects, &(&1.id == aspect_id)), do: {:ok, "entity", eid}
+      end)
+
+    if entity_hit do
+      entity_hit
+    else
+      Enum.find_value(state.scenes, fn scene ->
+        cond do
+          Enum.any?(scene.aspects, &(&1.id == aspect_id)) ->
+            {:ok, "scene", scene.id}
+
+          true ->
+            Enum.find_value(scene.zones, fn zone ->
+              if Enum.any?(zone.aspects, &(&1.id == aspect_id)), do: {:ok, "zone", zone.id}
+            end)
+        end
+      end) || :error
+    end
+  end
+
+  def find_aspect_container(_, _), do: :error
+
+  @doc """
+  Entity ids (strings) referenced by an event, for filtering the event log by selected table entities.
+  """
+  def event_entity_refs(%{type: type} = event) do
+    detail = event.detail || %{}
+    aid = event.actor_id
+    tid = event.target_id
+
+    case type do
+      :entity_create ->
+        MapSet.new() |> ref_put(detail["entity_id"])
+
+      :aspect_create ->
+        s = MapSet.new()
+
+        if (detail["target_type"] || "entity") == "entity" do
+          ref_put(s, detail["target_id"] || tid)
+        else
+          s
+        end
+
+      :aspect_modify ->
+        s = MapSet.new() |> ref_put(tid)
+        if detail["target_type"] == "entity", do: ref_put(s, detail["target_id"]), else: s
+
+      :aspect_remove ->
+        s = MapSet.new() |> ref_put(tid)
+        if detail["target_type"] == "entity", do: ref_put(s, detail["target_id"]), else: s
+
+      :note ->
+        s = MapSet.new()
+        if detail["target_type"] == "entity", do: ref_put(s, detail["target_id"]), else: s
+
+      :redirect_hit ->
+        MapSet.new()
+        |> ref_put(aid || detail["from_entity_id"])
+        |> ref_put(tid || detail["to_entity_id"])
+
+      t
+      when t in ~w(entity_modify entity_remove skill_set stunt_add stunt_remove stress_apply stress_clear consequence_take consequence_recover fate_point_spend fate_point_earn fate_point_refresh mook_eliminate)a ->
+        MapSet.new() |> ref_put(tid || aid || detail["entity_id"])
+
+      :entity_move ->
+        MapSet.new() |> ref_put(aid || detail["entity_id"])
+
+      :entity_enter_scene ->
+        MapSet.new() |> ref_put(detail["entity_id"] || aid)
+
+      :concede ->
+        MapSet.new() |> ref_put(aid)
+
+      :taken_out ->
+        MapSet.new() |> ref_put(tid || aid)
+
+      t when t in ~w(roll_attack roll_defend roll_overcome roll_create_advantage)a ->
+        MapSet.new()
+        |> ref_put(aid || detail["entity_id"])
+        |> ref_put(tid)
+
+      :invoke ->
+        MapSet.new() |> ref_put(aid)
+
+      :shifts_resolved ->
+        MapSet.new() |> ref_put(tid)
+
+      :aspect_compel ->
+        MapSet.new()
+        |> ref_put(tid)
+        |> ref_put(aid)
+        |> ref_put(detail["target_id"])
+
+      _ ->
+        MapSet.new()
+    end
+  end
+
+  def event_matches_selected_entities?(event, %MapSet{} = selected_ids) do
+    not MapSet.disjoint?(event_entity_refs(event), selected_ids)
+  end
+
+  defp ref_put(set, val) do
+    if is_binary(val) and val != "", do: MapSet.put(set, val), else: set
+  end
 end

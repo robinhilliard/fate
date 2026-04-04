@@ -93,6 +93,11 @@ defmodule FateWeb.PlayerPanelLive do
     {:noreply, assign(socket, :splash_visible, false)}
   end
 
+  def handle_event("clear_selection", _params, socket) do
+    FateWeb.Helpers.broadcast_selection(socket, [])
+    {:noreply, assign(socket, :selection, [])}
+  end
+
   def handle_event("start_exchange", %{"type" => type} = params, socket) do
     type = String.to_existing_atom(type)
 
@@ -834,28 +839,77 @@ defmodule FateWeb.PlayerPanelLive do
       <% end %>
 
       <%!-- Event log header --%>
-      <div class="p-4 border-b border-amber-900/30 flex items-center justify-between">
-        <h2
-          class="text-lg font-bold text-amber-100"
-          style="font-family: 'Permanent Marker', cursive;"
-        >
-          Events
-        </h2>
-        <div class="flex items-center gap-2">
-          <span class="text-amber-200/40 text-sm">{length(@events)} events</span>
-          <%= unless @embedded do %>
-            <button
-              id="dock-player"
-              phx-hook=".DockPanel"
-              data-panel="player"
-              data-bookmark-id={@bookmark_id}
-              class="p-1.5 rounded-lg text-amber-200/40 hover:text-amber-200/70 hover:bg-amber-900/30 transition"
-              title="Dock into table view"
+      <% selected_entity_ids =
+           @selection
+           |> Enum.filter(&(&1.type == "entity"))
+           |> Enum.map(& &1.id)
+           |> MapSet.new() %>
+      <% entity_filter_active? = MapSet.size(selected_entity_ids) > 0 %>
+      <% event_items =
+           @events
+           |> Enum.with_index()
+           |> then(fn pairs ->
+             if entity_filter_active? do
+               Enum.filter(pairs, fn {ev, _} ->
+                 Replay.event_matches_selected_entities?(ev, selected_entity_ids)
+               end)
+             else
+               pairs
+             end
+           end) %>
+      <% filtered_count = length(event_items) %>
+      <% total_count = length(@events) %>
+      <div class="p-4 border-b border-amber-900/30 flex flex-col gap-2">
+        <div class="flex items-baseline justify-between gap-3 min-w-0">
+          <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0 flex-1">
+            <h2
+              class="text-lg font-bold text-amber-100 shrink-0"
+              style="font-family: 'Permanent Marker', cursive;"
             >
-              <.icon name="hero-arrow-down-on-square" class="w-4 h-4" />
-            </button>
-          <% end %>
+              Events
+            </h2>
+            <%= if !entity_filter_active? do %>
+              <span class="text-sm text-amber-200/50 leading-snug">
+                No entity filter
+                <span class="text-amber-200/40"> {total_count} events</span>
+              </span>
+            <% end %>
+          </div>
+          <div class="flex items-center gap-2 shrink-0 self-start">
+            <%= unless @embedded do %>
+              <button
+                id="dock-player"
+                phx-hook=".DockPanel"
+                data-panel="player"
+                data-bookmark-id={@bookmark_id}
+                class="p-1.5 rounded-lg text-amber-200/40 hover:text-amber-200/70 hover:bg-amber-900/30 transition"
+                title="Dock into table view"
+              >
+                <.icon name="hero-arrow-down-on-square" class="w-4 h-4" />
+              </button>
+            <% end %>
+          </div>
         </div>
+        <%= if entity_filter_active? do %>
+          <div class="w-full min-w-0 text-sm">
+            <div class="text-amber-200/70 break-words [overflow-wrap:anywhere] leading-snug whitespace-normal">
+              Showing events for: {format_entity_filter_names(@state, selected_entity_ids)}
+            </div>
+            <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span class="text-amber-200/40">
+                {filtered_count} of {total_count} events
+              </span>
+              <button
+                type="button"
+                id="event-log-clear-selection"
+                phx-click="clear_selection"
+                class="text-amber-300/90 hover:text-amber-200 underline underline-offset-2 transition"
+              >
+                Clear selection
+              </button>
+            </div>
+          </div>
+        <% end %>
       </div>
 
       <%!-- Event log (chat order: oldest at top, newest at bottom) --%>
@@ -869,23 +923,29 @@ defmodule FateWeb.PlayerPanelLive do
         <%= if @events == [] do %>
           <div class="text-amber-200/30 text-center py-8">No events yet</div>
         <% else %>
-          <div
-            id="event-log-items"
-            phx-hook={if(@is_gm && !@is_observer, do: "EventReorder")}
-          >
-            <%= for {event, index} <- Enum.with_index(@events) do %>
-              <.event_row
-                event={event}
-                index={index}
-                state={@state}
-                immutable={index <= boundary}
-                is_observer={@is_observer}
-                is_gm={@is_gm}
-                invalid={MapSet.member?(@invalid_event_ids, event.id)}
-                my_entity_ids={my_entity_ids}
-              />
-            <% end %>
-          </div>
+          <%= if entity_filter_active? && filtered_count == 0 do %>
+            <div class="text-amber-200/40 text-center py-8">
+              No events match the selected entities.
+            </div>
+          <% else %>
+            <div
+              id="event-log-items"
+              phx-hook={if(@is_gm && !@is_observer && !entity_filter_active?, do: "EventReorder")}
+            >
+              <%= for {event, index} <- event_items do %>
+                <.event_row
+                  event={event}
+                  index={index}
+                  state={@state}
+                  immutable={index <= boundary}
+                  is_observer={@is_observer}
+                  is_gm={@is_gm}
+                  invalid={MapSet.member?(@invalid_event_ids, event.id)}
+                  my_entity_ids={my_entity_ids}
+                />
+              <% end %>
+            </div>
+          <% end %>
         <% end %>
       </div>
 
@@ -1014,6 +1074,24 @@ defmodule FateWeb.PlayerPanelLive do
     |> Enum.filter(&(&1.controller_id == participant_id))
     |> Enum.map(& &1.id)
     |> MapSet.new()
+  end
+
+  defp format_entity_filter_names(nil, _), do: "(unknown)"
+
+  defp format_entity_filter_names(state, selected_ids) do
+    selected_ids
+    |> MapSet.to_list()
+    |> Enum.map(fn id ->
+      label =
+        case Map.get(state.entities, id) do
+          %{name: n} when is_binary(n) and n != "" -> n
+          _ -> String.slice(id, 0, 8) <> "…"
+        end
+
+      {label, id}
+    end)
+    |> Enum.sort_by(fn {label, id} -> {String.downcase(label), id} end)
+    |> Enum.map_join(", ", fn {label, _} -> label end)
   end
 
   defp load_events_for_role(bookmark_id, true = _is_gm) do
