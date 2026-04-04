@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.TableInteractionsTest do
   use FateWeb.FeatureCase
+  @moduletag area: :table
 
   defp setup_with_entity(session) do
     session

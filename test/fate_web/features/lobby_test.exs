@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.LobbyTest do
   use FateWeb.FeatureCase
+  @moduletag area: :lobby
 
   feature "joining as GM redirects to table", %{session: session} do
     session

@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.EntityTest do
   use FateWeb.FeatureCase
+  @moduletag area: :entities
 
   defp create_entity_via_modal(session, name, kind \\ "npc") do
     session

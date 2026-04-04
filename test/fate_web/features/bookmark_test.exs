@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.BookmarkTest do
   use FateWeb.FeatureCase
+  @moduletag area: :bookmarks
 
   feature "fork bookmark creates child and navigates to table", %{session: session} do
     session =

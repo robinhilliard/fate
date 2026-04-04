@@ -38,7 +38,11 @@ defmodule FateWeb.TableLive do
   def handle_params(%{"bookmark_id" => bookmark_id}, _uri, socket) do
     if connected?(socket) do
       Engine.subscribe(bookmark_id)
-      Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{bookmark_id}")
+
+      Phoenix.PubSub.subscribe(
+        Fate.PubSub,
+        "selection:#{bookmark_id}:#{socket.assigns.current_participant_id}"
+      )
 
       case Engine.derive_state(bookmark_id) do
         {:ok, state} ->
@@ -345,7 +349,7 @@ defmodule FateWeb.TableLive do
     if socket.assigns.bookmark_id do
       Phoenix.PubSub.broadcast(
         Fate.PubSub,
-        "selection:#{socket.assigns.bookmark_id}",
+        "selection:#{socket.assigns.bookmark_id}:#{socket.assigns.current_participant_id}",
         {:selection_updated, selection}
       )
     end
@@ -753,6 +757,35 @@ defmodule FateWeb.TableLive do
       <%= if @state do %>
         <%!-- Toolbar buttons --%>
         <div class="absolute bottom-3 right-3 z-50 flex gap-2">
+          <button
+            id="fullscreen-toggle"
+            phx-hook=".Fullscreen"
+            phx-update="ignore"
+            class="px-2 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
+          >
+            <.icon name="hero-arrows-pointing-out" class="w-5 h-5" />
+          </button>
+          <script :type={Phoenix.LiveView.ColocatedHook} name=".Fullscreen">
+          export default {
+            mounted() {
+              this.el.addEventListener("click", () => {
+                if (!document.fullscreenElement) {
+                  document.documentElement.requestFullscreen();
+                } else {
+                  document.exitFullscreen();
+                }
+              });
+              document.addEventListener("fullscreenchange", () => {
+                const icon = this.el.querySelector("span");
+                if (document.fullscreenElement) {
+                  icon.className = icon.className.replace("hero-arrows-pointing-out", "hero-arrows-pointing-in");
+                } else {
+                  icon.className = icon.className.replace("hero-arrows-pointing-in", "hero-arrows-pointing-out");
+                }
+              });
+            }
+          }
+          </script>
           <button
             phx-click="open_cheat_sheet"
             class="px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"

@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.ActionsTest do
   use FateWeb.FeatureCase
+  @moduletag area: :actions
 
   defp setup_with_entity(session) do
     session

@@ -47,7 +47,12 @@ defmodule FateWeb.ActionsLive do
   def handle_params(%{"bookmark_id" => bookmark_id}, _uri, socket) do
     if connected?(socket) do
       Engine.subscribe(bookmark_id)
-      Phoenix.PubSub.subscribe(Fate.PubSub, "selection:#{bookmark_id}")
+
+      Phoenix.PubSub.subscribe(
+        Fate.PubSub,
+        "selection:#{bookmark_id}:#{socket.assigns.current_participant_id}"
+      )
+
       Phoenix.PubSub.subscribe(Fate.PubSub, "exchange:#{bookmark_id}")
 
       with {:ok, state} <- Engine.derive_state(bookmark_id) do
@@ -419,7 +424,8 @@ defmodule FateWeb.ActionsLive do
   end
 
   def handle_event("close_modal", _params, socket) do
-    {:noreply, socket |> assign(:modal, nil) |> assign(:form_data, %{})}
+    {:noreply,
+     socket |> assign(:modal, nil) |> assign(:form_data, %{}) |> assign(:prefill_entity_id, nil)}
   end
 
   def handle_event("modal_form_changed", params, socket) do
@@ -804,7 +810,11 @@ defmodule FateWeb.ActionsLive do
         {:noreply, push_navigate(socket, to: ~p"/table/#{new_bm_id}")}
 
       {:ok, _state, _event} ->
-        {:noreply, socket |> assign(:modal, nil) |> assign(:form_data, %{})}
+        {:noreply,
+         socket
+         |> assign(:modal, nil)
+         |> assign(:form_data, %{})
+         |> assign(:prefill_entity_id, nil)}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, inspect(reason))}
@@ -858,14 +868,24 @@ defmodule FateWeb.ActionsLive do
       <% end %>
 
       <%!-- Window switcher --%>
-      <a
-        href={~p"/table/#{@bookmark_id || ""}"}
-        target="fate-table"
-        class="absolute bottom-3 right-3 z-50 px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
-        style="font-family: 'Patrick Hand', cursive;"
-      >
-        Table ↗
-      </a>
+      <div class="absolute bottom-3 right-3 z-50 flex gap-2">
+        <button
+          id="fullscreen-toggle-actions"
+          phx-hook=".Fullscreen"
+          phx-update="ignore"
+          class="px-2 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
+        >
+          <.icon name="hero-arrows-pointing-out" class="w-5 h-5" />
+        </button>
+        <a
+          href={~p"/table/#{@bookmark_id || ""}"}
+          target="fate-table"
+          class="px-3 py-1.5 bg-amber-900/70 border border-amber-700/30 rounded-lg text-amber-200 text-sm hover:bg-amber-800/70 transition"
+          style="font-family: 'Patrick Hand', cursive;"
+        >
+          Table ↗
+        </a>
+      </div>
 
       <%!-- Modal overlay (not for observers) --%>
       <%= unless @is_observer do %>

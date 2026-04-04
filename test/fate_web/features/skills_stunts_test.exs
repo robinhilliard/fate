@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.SkillsStuntsTest do
   use FateWeb.FeatureCase
+  @moduletag area: :skills
 
   defp setup_with_entity(session) do
     session

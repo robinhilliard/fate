@@ -7,6 +7,7 @@ defmodule FateWeb.Features.SceneTest do
   in automated tests. Scene verification uses the event log.
   """
   use FateWeb.FeatureCase
+  @moduletag area: :scenes
 
   defp setup_bookmark(session) do
     session

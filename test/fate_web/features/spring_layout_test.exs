@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.SpringLayoutTest do
   use FateWeb.FeatureCase
+  @moduletag area: :layout
 
   defp setup_with_entities(session) do
     session

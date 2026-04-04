@@ -1,5 +1,6 @@
 defmodule FateWeb.Features.EventLogTest do
   use FateWeb.FeatureCase
+  @moduletag area: :events
 
   defp setup_with_events(session) do
     session
