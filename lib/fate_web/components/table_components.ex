@@ -49,7 +49,7 @@ defmodule FateWeb.TableComponents do
         <button
           phx-click="toggle_expand"
           phx-value-entity-id={@entity.id}
-          class="absolute top-1/2 -right-3 -translate-y-1/2 w-6 h-10 bg-gray-200/80 hover:bg-gray-300 rounded-r-md flex items-center justify-center transition-all opacity-0 group-hover/card:opacity-100"
+          class="absolute top-1/2 -right-3 -translate-y-1/2 w-6 h-10 bg-gray-200/80 hover:bg-gray-300 rounded-r-md flex items-center justify-center transition-all opacity-0 group-hover/card:opacity-100 touch-reveal"
         >
           <.icon
             name={if(@expanded, do: "hero-chevron-left-mini", else: "hero-chevron-right-mini")}
@@ -224,7 +224,7 @@ defmodule FateWeb.TableComponents do
               </span>
               <div
                 :if={!@is_observer}
-                class="absolute right-1 top-1/2 z-10 -translate-y-1/2 opacity-0 group-hover/cons:opacity-100 transition-opacity flex gap-0.5"
+                class="absolute right-1 top-1/2 z-10 -translate-y-1/2 opacity-0 group-hover/cons:opacity-100 transition-opacity flex gap-0.5 touch-reveal"
               >
                 <%= if cons.recovering do %>
                   <button
@@ -304,11 +304,18 @@ defmodule FateWeb.TableComponents do
             <div class="flex items-center gap-1 mb-1">
               <div class="text-xs text-gray-400 uppercase tracking-wide font-bold flex-1">Skills</div>
               <%= unless @is_observer do %>
-                <div class="relative group/add-skill">
-                  <button class="text-gray-400 hover:text-green-600 transition">
+                <div class="relative">
+                  <button
+                    phx-click={JS.toggle(to: "#skill-picker-#{@entity.id}")}
+                    class="text-gray-400 hover:text-green-600 transition"
+                  >
                     <.icon name="hero-plus" class="w-3 h-3" />
                   </button>
-                  <div class="hidden group-hover/add-skill:block absolute right-0 top-4 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-1 w-32 max-h-48 overflow-y-auto">
+                  <div
+                    id={"skill-picker-#{@entity.id}"}
+                    class="hidden absolute right-0 top-4 z-20 bg-white border border-gray-200 rounded-lg shadow-lg p-1 w-32 max-h-48 overflow-y-auto"
+                    phx-click-away={JS.hide(to: "#skill-picker-#{@entity.id}")}
+                  >
                     <% existing = Map.keys(@entity.skills) %>
                     <%= for skill <- available_skills() -- existing do %>
                       <button
@@ -341,7 +348,7 @@ defmodule FateWeb.TableComponents do
                         phx-value-entity-id={@entity.id}
                         phx-value-skill={skill}
                         phx-value-delta="-1"
-                        class="opacity-0 group-hover/skill:opacity-100 text-gray-400 hover:text-red-500 transition-opacity leading-none"
+                        class="opacity-0 group-hover/skill:opacity-100 text-gray-400 hover:text-red-500 transition-opacity leading-none touch-reveal"
                         data-tooltip={if(rating <= 1, do: "Remove skill")}
                       >
                         <.icon name="hero-minus" class="w-3 h-3" />
@@ -356,7 +363,7 @@ defmodule FateWeb.TableComponents do
                         phx-value-entity-id={@entity.id}
                         phx-value-skill={skill}
                         phx-value-delta="1"
-                        class="opacity-0 group-hover/skill:opacity-100 text-gray-400 hover:text-green-500 transition-opacity leading-none"
+                        class="opacity-0 group-hover/skill:opacity-100 text-gray-400 hover:text-green-500 transition-opacity leading-none touch-reveal"
                       >
                         <.icon name="hero-plus" class="w-3 h-3" />
                       </button>
@@ -396,7 +403,7 @@ defmodule FateWeb.TableComponents do
                           phx-value-entity-id={@entity.id}
                           phx-value-stunt-id={stunt.id}
                           data-confirm={"Remove stunt \"#{stunt.name}\"?"}
-                          class="opacity-0 group-hover/stunt:opacity-100 text-red-400 hover:text-red-600 transition-opacity leading-none shrink-0"
+                          class="opacity-0 group-hover/stunt:opacity-100 text-red-400 hover:text-red-600 transition-opacity leading-none shrink-0 touch-reveal"
                         >
                           <.icon name="hero-x-mark" class="w-3 h-3" />
                         </button>
@@ -553,7 +560,7 @@ defmodule FateWeb.TableComponents do
               if(@aspect.hidden,
                 do: "bg-amber-600 hover:bg-amber-500 text-white opacity-100",
                 else:
-                  "bg-gray-600 hover:bg-gray-500 text-white opacity-0 group-hover/scard:opacity-100"
+                  "bg-gray-600 hover:bg-gray-500 text-white opacity-0 group-hover/scard:opacity-100 touch-reveal"
               )
             ]}
             data-tooltip={if(@aspect.hidden, do: "Reveal", else: "Hide")}
@@ -564,7 +571,7 @@ defmodule FateWeb.TableComponents do
         <button
           phx-click="remove_scene_aspect"
           phx-value-aspect-id={@aspect.id}
-          class="w-5 h-5 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xs shadow opacity-0 group-hover/scard:opacity-100 transition-opacity"
+          class="w-5 h-5 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center text-xs shadow opacity-0 group-hover/scard:opacity-100 transition-opacity touch-reveal"
           data-tooltip="Remove"
         >
           ✕

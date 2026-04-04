@@ -917,7 +917,7 @@ defmodule FateWeb.TableLive do
                 <button
                   id="logout-btn"
                   phx-hook=".Logout"
-                  class="ml-2 opacity-0 group-hover/self:opacity-100 transition-opacity text-amber-200/40 hover:text-amber-200/80"
+                  class="ml-2 opacity-0 group-hover/self:opacity-100 transition-opacity text-amber-200/40 hover:text-amber-200/80 touch-reveal"
                   title="Leave table"
                 >
                   <.icon name="hero-arrow-right-start-on-rectangle" class="w-4 h-4" />
@@ -1125,7 +1125,7 @@ defmodule FateWeb.TableLive do
                       "absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs shadow-lg transition z-10",
                       if(zone.hidden,
                         do: "bg-amber-600 hover:bg-amber-500 text-white opacity-100",
-                        else: "bg-gray-600 hover:bg-gray-500 text-white opacity-0 hover:opacity-100"
+                        else: "bg-gray-600 hover:bg-gray-500 text-white opacity-0 hover:opacity-100 touch-reveal"
                       )
                     ]}
                     data-tooltip={if(zone.hidden, do: "Reveal zone", else: "Hide zone")}

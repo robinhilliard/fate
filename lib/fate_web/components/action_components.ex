@@ -140,7 +140,7 @@ defmodule FateWeb.ActionComponents do
           phx-click="edit_event"
           phx-value-id={@event.id}
           class={[
-            "opacity-0 group-hover:opacity-100 text-amber-400/50 hover:text-amber-300 text-xs transition shrink-0 relative",
+            "opacity-0 group-hover:opacity-100 text-amber-400/50 hover:text-amber-300 text-xs transition shrink-0 relative touch-reveal",
             @warn_history_action_tooltip && "event-log-action-tooltip"
           ]}
           data-tooltip={
@@ -158,7 +158,7 @@ defmodule FateWeb.ActionComponents do
           phx-click="delete_event"
           phx-value-id={@event.id}
           class={[
-            "opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 text-xs transition shrink-0 relative",
+            "opacity-0 group-hover:opacity-100 text-red-400/50 hover:text-red-400 text-xs transition shrink-0 relative touch-reveal",
             @warn_history_action_tooltip && "event-log-action-tooltip"
           ]}
           data-tooltip={

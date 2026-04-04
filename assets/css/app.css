@@ -26,6 +26,14 @@
 
 /* This file is for your main application CSS */
 
+/* Lock viewport on mobile: prevent pull-to-refresh, bounce scroll, and overscroll */
+html, body {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
 /* Global text rendering for crisp fonts */
 * {
   -webkit-font-smoothing: antialiased;
@@ -136,6 +144,13 @@
 
   .entity-aspect-row--actions:not(:has(.entity-aspect-actions--quad)) {
     padding-right: 3.75rem;
+  }
+}
+
+/* Touch devices: persistently reveal hover-hidden controls at a subtle opacity */
+@media (hover: none), (pointer: coarse) {
+  .touch-reveal {
+    opacity: 0.5 !important;
   }
 }
 
