@@ -27,6 +27,8 @@ import topbar from "../vendor/topbar"
 
 import { SpringLayout } from "./spring_layout"
 import { makeTouchDraggable, registerDropTarget, unregisterDropTarget } from "./touch_drag"
+import { MentionTypeahead } from "./mention_typeahead"
+import "tributejs/dist/tribute.css"
 
 const DraggableEntity = {
   mounted() {
@@ -583,7 +585,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     participant_name: localStorage.getItem("fate_name"),
     participant_role: localStorage.getItem("fate_role"),
   }),
-  hooks: {...colocatedHooks, SpringLayout, DraggableEntity, DropTarget, DraggableToken, ZoneDropTarget, EventReorder, StepReorder},
+  hooks: {...colocatedHooks, SpringLayout, DraggableEntity, DropTarget, DraggableToken, ZoneDropTarget, EventReorder, StepReorder, MentionTypeahead},
 })
 
 // Show progress bar on live navigation and form submits

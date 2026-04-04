@@ -33,6 +33,7 @@ defmodule FateWeb.TableLive do
         |> assign(:splash_visible, true)
         |> assign(:gm_panel_open, false)
         |> assign(:player_panel_open, false)
+        |> assign(:mention_catalog_json, Engine.mention_catalog_json(nil))
 
       {:ok, socket}
     end
@@ -61,6 +62,7 @@ defmodule FateWeb.TableLive do
             |> assign(:state, state)
             |> assign(:participants, participants)
             |> assign(:current_scene_id, current_scene && current_scene.id)
+            |> assign(:mention_catalog_json, Engine.mention_catalog_json(bookmark_id))
             |> maybe_open_panel(params["panel"])
             |> push_event("splash_dismiss", %{})
 
@@ -80,7 +82,10 @@ defmodule FateWeb.TableLive do
 
   @impl true
   def handle_info({:state_updated, state}, socket) do
-    {:noreply, assign(socket, :state, state)}
+    {:noreply,
+     socket
+     |> assign(:state, state)
+     |> assign(:mention_catalog_json, Engine.mention_catalog_json(socket.assigns.bookmark_id))}
   end
 
   def handle_info({:selection_updated, selection}, socket) do
@@ -1188,6 +1193,7 @@ defmodule FateWeb.TableLive do
             current_participant_id={@current_participant_id}
             is_gm={@is_gm}
             participants={@participants}
+            mention_catalog_json={@mention_catalog_json}
           />
         <% end %>
 

@@ -73,7 +73,8 @@ defmodule Fate.MixProject do
       {:ash_postgres, "~> 2.8"},
 
       # MCP Server
-      {:ex_mcp, "~> 0.9.0"}
+      {:ex_mcp, "~> 0.9.0"},
+      {:slugify, "~> 1.3"}
     ]
   end
 

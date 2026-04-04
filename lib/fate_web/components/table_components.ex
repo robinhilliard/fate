@@ -777,11 +777,16 @@ defmodule FateWeb.TableComponents do
   def table_modal(%{modal: nil} = assigns), do: ~H""
 
   def table_modal(%{modal: "scene_start"} = assigns) do
+    assigns =
+      assign_new(assigns, :mention_catalog_json, fn ->
+        Fate.Engine.mention_catalog_json(nil)
+      end)
+
     ~H"""
     <.modal_frame variant={:table} inner_click_away={true}>
       <:title>Start Scene</:title>
       <form phx-submit="submit_table_modal" class="space-y-3">
-        <.scene_start_fields />
+        <.scene_start_fields mention_catalog_json={@mention_catalog_json} />
         <.modal_frame_actions primary_label="Start" close_event="close_table_modal" />
       </form>
     </.modal_frame>
@@ -1401,6 +1406,7 @@ defmodule FateWeb.TableComponents do
       assigns
       |> assign(:target_options, target_options)
       |> assign(:preselect_ref, preselect_ref)
+      |> assign_new(:mention_catalog_json, fn -> Fate.Engine.mention_catalog_json(nil) end)
 
     ~H"""
     <.modal_frame variant={:table} escape_close={true}>
@@ -1412,6 +1418,7 @@ defmodule FateWeb.TableComponents do
           target_ref={@preselect_ref || ""}
           note_text_id="note-text-input"
           autofocus_note={true}
+          mention_catalog_json={@mention_catalog_json}
         />
         <.modal_frame_actions
           primary_label="OK"

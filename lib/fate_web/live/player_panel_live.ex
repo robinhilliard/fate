@@ -45,6 +45,7 @@ defmodule FateWeb.PlayerPanelLive do
         |> assign(:modal_original_detail, nil)
         |> assign(:embedded, embedded)
         |> assign(:splash_visible, !embedded)
+        |> assign(:mention_catalog_json, Engine.mention_catalog_json(bookmark_id))
 
       socket =
         if connected?(socket) && bookmark_id do
@@ -66,7 +67,11 @@ defmodule FateWeb.PlayerPanelLive do
      socket
      |> assign(:state, state)
      |> assign(:events, events)
-     |> assign(:invalid_event_ids, Replay.validate_chain(events))}
+     |> assign(:invalid_event_ids, Replay.validate_chain(events))
+     |> assign(
+       :mention_catalog_json,
+       Engine.mention_catalog_json(socket.assigns.bookmark_id)
+     )}
   end
 
   def handle_info({:selection_updated, selection}, socket) do
@@ -734,6 +739,7 @@ defmodule FateWeb.PlayerPanelLive do
           prefill_entity_id={@prefill_entity_id}
           form_data={@form_data}
           participants={@participants}
+          mention_catalog_json={@mention_catalog_json}
         />
       <% end %>
 
@@ -1113,6 +1119,7 @@ defmodule FateWeb.PlayerPanelLive do
         |> assign(:invalid_event_ids, Replay.validate_chain(events))
         |> assign(:participants, participants)
         |> assign(:state, state)
+        |> assign(:mention_catalog_json, Engine.mention_catalog_json(bookmark_id))
 
       _ ->
         socket
@@ -1196,7 +1203,9 @@ defmodule FateWeb.PlayerPanelLive do
           {:state_updated, state}
         )
 
-        assign(socket, :state, state)
+        socket
+        |> assign(:state, state)
+        |> assign(:mention_catalog_json, Engine.mention_catalog_json(bookmark_id))
 
       _ ->
         socket

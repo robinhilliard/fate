@@ -6,7 +6,7 @@ defmodule Fate.Engine do
   """
 
   alias Fate.Game
-  alias Fate.Engine.Replay
+  alias Fate.Engine.{MentionCatalog, Replay}
 
   @pubsub Fate.PubSub
 
@@ -152,4 +152,34 @@ defmodule Fate.Engine do
   def subscribe(bookmark_id) do
     Phoenix.PubSub.subscribe(@pubsub, "bookmark:#{bookmark_id}")
   end
+
+  @doc """
+  Builds @ / # type-ahead catalog from the full event chain at the bookmark head
+  (includes stowed entities and ended scenes).
+  """
+  def mention_catalog(bookmark_id) when is_binary(bookmark_id) do
+    with {:ok, bookmark} when bookmark != nil <- Game.get_bookmark(bookmark_id),
+         {:ok, events} <- load_event_chain(bookmark.head_event_id) do
+      {:ok, MentionCatalog.build(events)}
+    else
+      {:ok, nil} -> {:error, :not_found}
+      error -> error
+    end
+  end
+
+  def mention_catalog(_), do: {:error, :not_found}
+
+  @doc """
+  JSON payload for `data-mention-catalog` on type-ahead textareas.
+  """
+  def mention_catalog_json(nil), do: Jason.encode!(%{entities: [], hashtags: []})
+
+  def mention_catalog_json(bookmark_id) when is_binary(bookmark_id) do
+    case mention_catalog(bookmark_id) do
+      {:ok, cat} -> Jason.encode!(cat)
+      _ -> Jason.encode!(%{entities: [], hashtags: []})
+    end
+  end
+
+  def mention_catalog_json(_), do: Jason.encode!(%{entities: [], hashtags: []})
 end

@@ -101,12 +101,15 @@ defmodule FateWeb.ModalForms do
     """
   end
 
+  @empty_mention_catalog Jason.encode!(%{entities: [], hashtags: []})
+
   @doc "Start scene: name, description, GM notes; optional hidden scene_id when editing from log."
   attr :scene_id, :string, default: nil
   attr :name_value, :string, default: ""
   attr :scene_description_value, :string, default: ""
   attr :gm_notes_value, :string, default: ""
   attr :name_required, :boolean, default: false
+  attr :mention_catalog_json, :string, default: @empty_mention_catalog
 
   def scene_start_fields(assigns) do
     ~H"""
@@ -125,18 +128,24 @@ defmodule FateWeb.ModalForms do
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">Description</label>
       <textarea
+        id="modal-scene-description"
         name="scene_description"
         placeholder="A brief framing of the scene"
         rows="3"
+        phx-hook="MentionTypeahead"
+        data-mention-catalog={@mention_catalog_json}
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
       >{@scene_description_value}</textarea>
     </div>
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
       <textarea
+        id="modal-scene-gm-notes"
         name="gm_notes"
         placeholder="Private prep notes..."
         rows="3"
+        phx-hook="MentionTypeahead"
+        data-mention-catalog={@mention_catalog_json}
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
       >{@gm_notes_value}</textarea>
     </div>
@@ -185,6 +194,7 @@ defmodule FateWeb.ModalForms do
   attr :target_ref, :string, default: ""
   attr :note_text_id, :string, default: nil
   attr :autofocus_note, :boolean, default: false
+  attr :mention_catalog_json, :string, default: @empty_mention_catalog
 
   def note_form_fields(assigns) do
     ~H"""
@@ -196,6 +206,8 @@ defmodule FateWeb.ModalForms do
         rows="4"
         required
         phx-mounted={if @autofocus_note, do: JS.focus()}
+        phx-hook="MentionTypeahead"
+        data-mention-catalog={@mention_catalog_json}
         placeholder="What happened..."
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
       >{@text}</textarea>

@@ -21,6 +21,9 @@
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
+/* Tribute @ / # type-ahead (mention catalog on scene + note fields) */
+@import "../node_modules/tributejs/dist/tribute.css";
+
 /* This file is for your main application CSS */
 
 /* Global text rendering for crisp fonts */

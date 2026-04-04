@@ -1,8 +1,14 @@
 defmodule FateWeb.ActionComponents do
   use FateWeb, :html
 
+  alias Fate.Engine
+
   import FateWeb.ModalComponents
   import FateWeb.ModalForms
+
+  defp mention_catalog_json(assigns) do
+    Map.get(assigns, :mention_catalog_json) || Engine.mention_catalog_json(nil)
+  end
 
   @event_type_labels %{
     create_campaign: "Create Campaign",
@@ -600,6 +606,7 @@ defmodule FateWeb.ActionComponents do
       |> assign(:entities, entities)
       |> assign(:editing?, editing?)
       |> assign(:modal_state, modal_state)
+      |> assign_new(:mention_catalog_json, fn -> Engine.mention_catalog_json(nil) end)
 
     ~H"""
     <.modal_frame variant={:panel}>
@@ -615,6 +622,7 @@ defmodule FateWeb.ActionComponents do
           prefill_entity_id={@prefill_entity_id}
           form_data={@form_data}
           participants={@participants}
+          mention_catalog_json={@mention_catalog_json}
         />
         <.modal_frame_actions primary_label="Confirm" close_event="close_modal" />
       </form>
@@ -802,7 +810,12 @@ defmodule FateWeb.ActionComponents do
 
   def modal_fields(%{modal: "scene_start"} = assigns) do
     fd = assigns[:form_data] || %{}
-    assigns = assign(assigns, :fd, fd)
+    mcj = mention_catalog_json(assigns)
+
+    assigns =
+      assigns
+      |> assign(:fd, fd)
+      |> assign(:mcj, mcj)
 
     ~H"""
     <.scene_start_fields
@@ -811,6 +824,7 @@ defmodule FateWeb.ActionComponents do
       scene_description_value={@fd["scene_description"] || ""}
       gm_notes_value={@fd["gm_notes"] || ""}
       name_required={true}
+      mention_catalog_json={@mcj}
     />
     """
   end
@@ -1162,6 +1176,8 @@ defmodule FateWeb.ActionComponents do
 
     first_scene = List.first(scenes)
 
+    mcj = mention_catalog_json(assigns)
+
     assigns =
       assigns
       |> assign(:scenes, scenes)
@@ -1181,6 +1197,7 @@ defmodule FateWeb.ActionComponents do
         if(editing?, do: fd["gm_notes"], else: if(first_scene, do: first_scene.gm_notes))
       )
       |> assign(:fd, fd)
+      |> assign(:mcj, mcj)
 
     ~H"""
     <div>
@@ -1198,8 +1215,11 @@ defmodule FateWeb.ActionComponents do
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">Description</label>
       <textarea
+        id="panel-scene-description-edit"
         name="scene_description"
         placeholder="Scene description"
+        phx-hook="MentionTypeahead"
+        data-mention-catalog={@mcj}
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
         rows="3"
       >{@s_desc}</textarea>
@@ -1207,8 +1227,11 @@ defmodule FateWeb.ActionComponents do
     <div>
       <label class="block text-sm text-amber-200/70 mb-1">GM Notes</label>
       <textarea
+        id="panel-gm-notes-edit"
         name="gm_notes"
         placeholder="Private prep notes..."
+        phx-hook="MentionTypeahead"
+        data-mention-catalog={@mcj}
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
         rows="3"
       >{@s_notes}</textarea>
@@ -1225,6 +1248,7 @@ defmodule FateWeb.ActionComponents do
   def modal_fields(%{modal: modal} = assigns) when modal in ~w(note edit_note) do
     fd = assigns[:form_data] || %{}
     all_options = note_target_options(assigns.state)
+    mcj = mention_catalog_json(assigns)
 
     prefill_ref =
       fd["target_ref"] ||
@@ -1235,12 +1259,14 @@ defmodule FateWeb.ActionComponents do
       |> assign(:all_options, all_options)
       |> assign(:note_text, fd["text"] || "")
       |> assign(:note_target_ref, prefill_ref)
+      |> assign(:mcj, mcj)
 
     ~H"""
     <.note_form_fields
       all_options={@all_options}
       text={@note_text}
       target_ref={@note_target_ref}
+      mention_catalog_json={@mcj}
     />
     """
   end
