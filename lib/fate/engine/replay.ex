@@ -122,6 +122,14 @@ defmodule Fate.Engine.Replay do
     Enum.reduce(events, initial, &apply_event/2)
   end
 
+  @doc """
+  Aspect id stored on or implied by an `:aspect_create` event (matches `apply_aspect_create/2`).
+  """
+  def aspect_id_for_create_event(%{id: id, detail: detail}) do
+    d = detail || %{}
+    d["aspect_id"] || deterministic_id("aspect", "#{id || ""}")
+  end
+
   defp apply_event(event, state) do
     case event.type do
       :create_campaign -> apply_create_campaign(event, state)

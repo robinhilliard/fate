@@ -7,6 +7,7 @@ defmodule FateWeb.ActionHelpers do
   """
 
   alias Fate.Engine
+  alias Fate.Engine.Replay
 
   def bookmark_boundary_index(events) do
     events
@@ -35,8 +36,15 @@ defmodule FateWeb.ActionHelpers do
     end
   end
 
-  def build_edit_form_data(%{type: :note} = event) do
+  @doc """
+  Builds form field map for editing an event. Pass `state_after_event: state` to fill
+  patch-shaped `detail` fields from replayed snapshot (post-event derived state).
+  """
+  def build_edit_form_data(event, opts \\ [])
+
+  def build_edit_form_data(%{type: :note} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
 
     target_ref =
       case {detail["target_type"], event.target_id} do
@@ -44,14 +52,29 @@ defmodule FateWeb.ActionHelpers do
         _ -> ""
       end
 
+    text =
+      if Map.has_key?(detail, "text") do
+        detail["text"] || ""
+      else
+        event.description || ""
+      end
+
+    target_ref =
+      if target_ref != "" or state == nil do
+        target_ref
+      else
+        note_target_ref_from_state(state, event.target_id, detail["target_type"])
+      end
+
     edit_base(event, %{
-      "text" => detail["text"] || event.description || "",
+      "text" => text,
       "target_ref" => target_ref
     })
   end
 
-  def build_edit_form_data(%{type: :aspect_create} = event) do
+  def build_edit_form_data(%{type: :aspect_create} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
 
     target_ref =
       case {detail["target_type"], detail["target_id"] || event.target_id} do
@@ -59,19 +82,24 @@ defmodule FateWeb.ActionHelpers do
         _ -> ""
       end
 
+    aspect_row = aspect_create_row_from_state(state, event, detail)
+
     edit_base(event, %{
       "target_ref" => target_ref,
-      "description" => detail["description"] || "",
-      "role" => detail["role"] || "additional",
-      "hidden" => if(detail["hidden"] == true, do: "true", else: nil)
+      "description" => aspect_field(aspect_row, detail, "description"),
+      "role" =>
+        aspect_field(aspect_row, detail, "role") ||
+          (detail["role"] && to_string(detail["role"])) || "additional",
+      "hidden" =>
+        if(aspect_hidden?(aspect_row, detail), do: "true", else: nil)
     })
   end
 
-  def build_edit_form_data(%{type: :aspect_compel} = event) do
+  def build_edit_form_data(%{type: :aspect_compel} = event, _opts) do
     detail = event.detail || %{}
 
     edit_base(event, %{
-      "actor_id" => event.actor_id || "",
+      "actor_id" => event.actor_id || detail["actor_id"] || "",
       "target_id" => event.target_id || detail["target_id"] || "",
       "aspect_id" => detail["aspect_id"] || "",
       "description" => detail["description"] || "",
@@ -79,89 +107,192 @@ defmodule FateWeb.ActionHelpers do
     })
   end
 
-  def build_edit_form_data(%{type: :entity_move} = event) do
+  def build_edit_form_data(%{type: :entity_move} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
+
+    entity_id = detail["entity_id"] || event.actor_id || ""
+
+    zone_id =
+      if Map.has_key?(detail, "zone_id") do
+        detail["zone_id"] || ""
+      else
+        if state && entity_id do
+          entity = Map.get(state.entities, entity_id)
+          if entity, do: entity.zone_id || "", else: ""
+        else
+          ""
+        end
+      end
 
     edit_base(event, %{
-      "entity_id" => detail["entity_id"] || event.actor_id || "",
-      "zone_id" => detail["zone_id"] || ""
+      "entity_id" => entity_id,
+      "zone_id" => zone_id
     })
   end
 
-  def build_edit_form_data(%{type: type} = event) when type in ~w(scene_start scene_modify)a do
+  def build_edit_form_data(%{type: type} = event, opts) when type in ~w(scene_start scene_modify)a do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
+    scene_id = detail["scene_id"] || ""
+
+    scene =
+      if state && scene_id != "" do
+        Enum.find(state.scenes, &(&1.id == scene_id))
+      end
+
+    name =
+      if Map.has_key?(detail, "name"), do: detail["name"] || "", else: (scene && scene.name) || ""
+
+    desc =
+      if Map.has_key?(detail, "description"),
+        do: detail["description"] || "",
+        else: (scene && scene.description) || ""
+
+    gm =
+      if Map.has_key?(detail, "gm_notes"),
+        do: detail["gm_notes"] || "",
+        else: (scene && scene.gm_notes) || ""
 
     edit_base(event, %{
-      "scene_id" => detail["scene_id"] || "",
-      "name" => detail["name"] || "",
-      "scene_description" => detail["description"] || "",
-      "gm_notes" => detail["gm_notes"] || ""
+      "scene_id" => scene_id,
+      "name" => name,
+      "scene_description" => desc,
+      "gm_notes" => gm
     })
   end
 
-  def build_edit_form_data(%{type: :entity_create} = event) do
+  def build_edit_form_data(%{type: :entity_create} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
+    entity_id = detail["entity_id"] || ""
+    entity = state && entity_id != "" && Map.get(state.entities, entity_id)
 
     aspects_text =
-      case detail["aspects"] do
-        aspects when is_list(aspects) ->
-          Enum.map_join(aspects, "\n", fn a ->
-            if a["role"] && a["role"] != "additional",
-              do: "#{a["role"]}|#{a["description"]}",
-              else: a["description"] || ""
+      cond do
+        Map.has_key?(detail, "aspects") ->
+          case detail["aspects"] do
+            aspects when is_list(aspects) ->
+              Enum.map_join(aspects, "\n", fn a ->
+                if a["role"] && a["role"] != "additional",
+                  do: "#{a["role"]}|#{a["description"]}",
+                  else: a["description"] || ""
+              end)
+
+            _ ->
+              ""
+          end
+
+        entity && entity.aspects != [] ->
+          Enum.map_join(entity.aspects, "\n", fn a ->
+            role = to_string(a.role || :additional)
+
+            if role != "additional",
+              do: "#{role}|#{a.description}",
+              else: a.description || ""
           end)
 
-        _ ->
+        true ->
           ""
       end
 
     edit_base(event, %{
-      "entity_id" => detail["entity_id"] || "",
-      "name" => detail["name"] || "",
-      "kind" => detail["kind"] || "npc",
-      "controller_id" => detail["controller_id"] || "",
-      "fate_points" => to_string(detail["fate_points"] || ""),
-      "refresh" => to_string(detail["refresh"] || ""),
-      "parent_entity_id" => detail["parent_entity_id"] || "",
+      "entity_id" => entity_id,
+      "name" => field_from_detail_or_entity(detail, entity, "name", :name, & &1),
+      "kind" =>
+        field_from_detail_or_entity(detail, entity, "kind", :kind, fn
+          nil -> "npc"
+          k when is_atom(k) -> Atom.to_string(k)
+          k -> to_string(k)
+        end),
+      "controller_id" =>
+        field_from_detail_or_entity(detail, entity, "controller_id", :controller_id, & &1),
+      "fate_points" =>
+        field_from_detail_or_entity(detail, entity, "fate_points", :fate_points, &int_to_form/1),
+      "refresh" =>
+        field_from_detail_or_entity(detail, entity, "refresh", :refresh, &int_to_form/1),
+      "parent_entity_id" =>
+        field_from_detail_or_entity(detail, entity, "parent_entity_id", :parent_id, & &1),
       "aspects" => aspects_text
     })
   end
 
-  def build_edit_form_data(%{type: :entity_modify} = event) do
+  def build_edit_form_data(%{type: :entity_modify} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
+    entity_id = detail["entity_id"] || event.target_id || ""
+    entity = state && entity_id != "" && Map.get(state.entities, entity_id)
 
     edit_base(event, %{
-      "entity_id" => detail["entity_id"] || event.target_id || "",
-      "name" => detail["name"] || "",
-      "kind" => detail["kind"] || "",
-      "controller_id" => detail["controller_id"] || "",
-      "fate_points" => to_string(detail["fate_points"] || ""),
-      "refresh" => to_string(detail["refresh"] || "")
+      "entity_id" => entity_id,
+      "name" => field_from_detail_or_entity(detail, entity, "name", :name, & &1),
+      "kind" =>
+        field_from_detail_or_entity(detail, entity, "kind", :kind, fn
+          nil -> ""
+          k when is_atom(k) -> Atom.to_string(k)
+          k -> to_string(k)
+        end),
+      "controller_id" =>
+        field_from_detail_or_entity(detail, entity, "controller_id", :controller_id, & &1),
+      "fate_points" =>
+        field_from_detail_or_entity(detail, entity, "fate_points", :fate_points, &int_to_form/1),
+      "refresh" =>
+        field_from_detail_or_entity(detail, entity, "refresh", :refresh, &int_to_form/1)
     })
   end
 
-  def build_edit_form_data(%{type: :skill_set} = event) do
+  def build_edit_form_data(%{type: :skill_set} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
+    entity_id = detail["entity_id"] || event.target_id || ""
+    entity = state && entity_id != "" && Map.get(state.entities, entity_id)
+
+    skill =
+      if Map.has_key?(detail, "skill") do
+        detail["skill"] || ""
+      else
+        ""
+      end
+
+    rating_str =
+      if Map.has_key?(detail, "rating") do
+        to_string(detail["rating"] || "")
+      else
+        if entity && skill != "" do
+          to_string(Map.get(entity.skills, skill, 0))
+        else
+          ""
+        end
+      end
 
     edit_base(event, %{
-      "entity_id" => detail["entity_id"] || event.target_id || "",
-      "skill" => detail["skill"] || "",
-      "rating" => to_string(detail["rating"] || "")
+      "entity_id" => entity_id,
+      "skill" => skill,
+      "rating" => rating_str
     })
   end
 
-  def build_edit_form_data(%{type: :stunt_add} = event) do
+  def build_edit_form_data(%{type: :stunt_add} = event, opts) do
     detail = event.detail || %{}
+    state = Keyword.get(opts, :state_after_event)
+    entity_id = detail["entity_id"] || event.target_id || ""
+    stunt_id = detail["stunt_id"] || ""
+    entity = state && entity_id != "" && Map.get(state.entities, entity_id)
+
+    stunt =
+      if entity && stunt_id != "" do
+        Enum.find(entity.stunts, &(&1.id == stunt_id))
+      end
 
     edit_base(event, %{
-      "entity_id" => detail["entity_id"] || event.target_id || "",
-      "stunt_id" => detail["stunt_id"] || "",
-      "name" => detail["name"] || "",
-      "effect" => detail["effect"] || ""
+      "entity_id" => entity_id,
+      "stunt_id" => stunt_id,
+      "name" => field_from_detail_or_stunt(detail, stunt, "name", :name, & &1),
+      "effect" => field_from_detail_or_stunt(detail, stunt, "effect", :effect, & &1)
     })
   end
 
-  def build_edit_form_data(%{type: :stunt_remove} = event) do
+  def build_edit_form_data(%{type: :stunt_remove} = event, _opts) do
     detail = event.detail || %{}
 
     edit_base(event, %{
@@ -170,20 +301,421 @@ defmodule FateWeb.ActionHelpers do
     })
   end
 
-  def build_edit_form_data(%{type: :set_system} = event) do
+  def build_edit_form_data(%{type: :set_system} = event, _opts) do
     detail = event.detail || %{}
     edit_base(event, %{"system" => detail["system"] || "core"})
   end
 
-  def build_edit_form_data(%{type: type} = event)
+  def build_edit_form_data(%{type: type} = event, _opts)
       when type in ~w(fate_point_spend fate_point_earn fate_point_refresh)a do
     detail = event.detail || %{}
     edit_base(event, %{"entity_id" => detail["entity_id"] || event.target_id || ""})
   end
 
-  def build_edit_form_data(event), do: %{"event_id" => event.id}
+  def build_edit_form_data(event, _opts), do: %{"event_id" => event.id}
 
   defp edit_base(event, fields), do: Map.put(fields, "event_id", event.id)
+
+  defp int_to_form(nil), do: ""
+  defp int_to_form(v), do: to_string(v)
+
+  defp field_from_detail_or_entity(detail, entity, detail_key, entity_key, from_entity) do
+    if is_map(detail) && Map.has_key?(detail, detail_key) do
+      v = Map.get(detail, detail_key)
+      if detail_key in ~w(fate_points refresh), do: int_to_form(v), else: v || ""
+    else
+      case entity do
+        nil -> ""
+        e -> from_entity.(Map.get(e, entity_key)) || ""
+      end
+    end
+  end
+
+  defp field_from_detail_or_stunt(detail, stunt, detail_key, stunt_key, from_stunt) do
+    if is_map(detail) && Map.has_key?(detail, detail_key) do
+      Map.get(detail, detail_key) || ""
+    else
+      case stunt do
+        nil -> ""
+        s -> from_stunt.(Map.get(s, stunt_key)) || ""
+      end
+    end
+  end
+
+  defp aspect_field(aspect_row, detail, "description") do
+    if aspect_row, do: aspect_row.description || "", else: detail["description"] || ""
+  end
+
+  defp aspect_field(aspect_row, detail, "role") do
+    if aspect_row do
+      to_string(aspect_row.role || :additional)
+    else
+      detail["role"] || "additional"
+    end
+  end
+
+  defp aspect_hidden?(aspect_row, detail) do
+    if aspect_row do
+      aspect_row.hidden == true
+    else
+      detail["hidden"] == true
+    end
+  end
+
+  defp aspect_create_row_from_state(nil, _event, _detail), do: nil
+
+  defp aspect_create_row_from_state(state, event, detail) do
+    target_type = detail["target_type"] || "entity"
+    target_id = detail["target_id"] || event.target_id
+    aid = Replay.aspect_id_for_create_event(event)
+
+    case target_type do
+      "entity" ->
+        state.entities
+        |> Map.get(target_id || "")
+        |> case do
+          nil -> nil
+          e -> Enum.find(e.aspects, &(&1.id == aid))
+        end
+
+      "scene" ->
+        Enum.find(state.scenes, &(&1.id == target_id))
+        |> case do
+          nil -> nil
+          s -> Enum.find(s.aspects, &(&1.id == aid))
+        end
+
+      "zone" ->
+        state.scenes
+        |> Enum.flat_map(& &1.zones)
+        |> Enum.find(&(&1.id == target_id))
+        |> case do
+          nil -> nil
+          z -> Enum.find(z.aspects, &(&1.id == aid))
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp note_target_ref_from_state(_state, nil, _), do: ""
+
+  defp note_target_ref_from_state(_state, target_id, target_type) when is_binary(target_id) do
+    tt = target_type || "entity"
+    "#{tt}:#{target_id}"
+  end
+
+  @doc """
+  Merges `detail` for an event edit: starts from `original_detail`, updates only keys
+  whose normalized submitted values differ from `baseline` (form values at open).
+  """
+  def merge_edit_detail(modal, original_detail, baseline, params, participants \\ [])
+
+  def merge_edit_detail(modal, original, baseline, params, participants) do
+    original = if is_map(original), do: original, else: %{}
+    baseline = baseline || %{}
+
+    case modal do
+      "aspect_create" ->
+        merge_aspect_create_detail(original, baseline, params)
+
+      "aspect_compel" ->
+        merge_aspect_compel_detail(original, baseline, params)
+
+      "entity_move" ->
+        merge_entity_move_detail(original, baseline, params)
+
+      "scene_start" ->
+        merge_scene_detail(original, baseline, params)
+
+      "scene_modify" ->
+        merge_scene_detail(original, baseline, params)
+
+      "entity_create" ->
+        merge_entity_create_detail(original, baseline, params, participants)
+
+      "entity_edit" ->
+        merge_entity_modify_detail(original, baseline, params, participants)
+
+      "skill_set" ->
+        merge_skill_set_detail(original, baseline, params)
+
+      "stunt_add" ->
+        merge_stunt_add_detail(original, baseline, params)
+
+      "stunt_remove" ->
+        merge_stunt_remove_detail(original, baseline, params)
+
+      "set_system" ->
+        merge_set_system_detail(original, baseline, params)
+
+      m when m in ~w(fate_point_spend fate_point_earn fate_point_refresh) ->
+        merge_fate_point_detail(original, baseline, params)
+
+      m when m in ~w(note edit_note) ->
+        merge_note_detail(original, baseline, params)
+
+      _ ->
+        original
+    end
+  end
+
+  defp str(v), do: v |> to_string() |> String.trim()
+
+  defp merge_aspect_create_detail(o, b, params) do
+    br = str(b["target_ref"] || "")
+    pr = str(params["target_ref"] || "")
+
+    o
+    |> put_if_str_changed("description", str(params["description"] || ""), str(b["description"] || ""))
+    |> put_if_str_changed("role", params["role"] || "additional", b["role"] || "additional", &str/1)
+    |> put_if_bool_changed("hidden", params["hidden"] == "true", b["hidden"] == "true")
+    |> then(fn acc ->
+      if pr != br do
+        {tt, tid} = FateWeb.Helpers.parse_target_ref(params["target_ref"] || "")
+        tt = tt || "entity"
+        acc |> Map.put("target_type", tt) |> Map.put("target_id", tid)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp merge_aspect_compel_detail(o, b, params) do
+    accepted_new = params["accepted"] != "false"
+    accepted_base = b["accepted"] != "false"
+
+    o
+    |> put_if_str_changed("actor_id", str(params["actor_id"] || ""), str(b["actor_id"] || ""))
+    |> put_if_str_changed("target_id", str(params["target_id"] || ""), str(b["target_id"] || ""))
+    |> put_if_str_changed("aspect_id", str(params["aspect_id"] || ""), str(b["aspect_id"] || ""))
+    |> put_if_str_changed("description", str(params["description"] || ""), str(b["description"] || ""))
+    |> put_if_bool_changed("accepted", accepted_new, accepted_base)
+  end
+
+  defp merge_entity_move_detail(o, b, params) do
+    o
+    |> put_if_str_changed("entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+    |> put_if_str_changed("zone_id", str(params["zone_id"] || ""), str(b["zone_id"] || ""))
+  end
+
+  defp merge_scene_detail(o, b, params) do
+    acc =
+      o
+      |> put_if_str_changed("name", str(params["name"] || ""), str(b["name"] || ""))
+      |> put_if_str_changed(
+        "description",
+        str(params["scene_description"] || ""),
+        str(b["scene_description"] || "")
+      )
+      |> put_if_str_changed("gm_notes", str(params["gm_notes"] || ""), str(b["gm_notes"] || ""))
+
+    sid = str(params["scene_id"] || "")
+    sb = str(b["scene_id"] || "")
+
+    if sid != sb, do: Map.put(acc, "scene_id", sid), else: acc
+  end
+
+  defp merge_entity_create_detail(o, b, params, participants) do
+    new_controller =
+      if params["controller_id"] not in [nil, ""], do: params["controller_id"], else: ""
+
+    base_controller = str(b["controller_id"] || "")
+
+    color =
+      if new_controller != "" && new_controller != base_controller do
+        bp = Enum.find(participants || [], &(&1.participant_id == new_controller))
+        if(bp, do: bp.participant.color, else: "#6b7280")
+      else
+        nil
+      end
+
+    aspects_changed? = str(params["aspects"] || "") != str(b["aspects"] || "")
+
+    acc =
+      o
+      |> put_if_str_changed("entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+      |> put_if_str_changed("name", str(params["name"] || ""), str(b["name"] || ""))
+      |> put_if_str_changed("kind", str(params["kind"] || "npc"), str(b["kind"] || "npc"))
+      |> put_if_int_string_changed("fate_points", params["fate_points"], b["fate_points"])
+      |> put_if_int_string_changed("refresh", params["refresh"], b["refresh"])
+      |> put_if_str_changed(
+        "parent_entity_id",
+        str(params["parent_entity_id"] || ""),
+        str(b["parent_entity_id"] || "")
+      )
+
+    acc =
+      cond do
+        new_controller != "" && new_controller != base_controller ->
+          acc |> Map.put("controller_id", new_controller) |> Map.put("color", color)
+
+        new_controller == "" && base_controller != "" ->
+          Map.put(acc, "controller_id", nil)
+
+        true ->
+          acc
+      end
+
+    if aspects_changed? do
+      aspects =
+        if params["aspects"] && str(params["aspects"]) != "" do
+          params["aspects"]
+          |> String.split("\n", trim: true)
+          |> Enum.map(fn line ->
+            case String.split(line, "|", parts: 2) do
+              [role, desc] ->
+                %{"role" => String.trim(role), "description" => String.trim(desc)}
+
+              [desc] ->
+                %{"role" => "additional", "description" => String.trim(desc)}
+            end
+          end)
+        else
+          []
+        end
+
+      Map.put(acc, "aspects", aspects)
+    else
+      acc
+    end
+  end
+
+  defp merge_entity_modify_detail(o, b, params, participants) do
+    new_controller =
+      if params["controller_id"] not in [nil, ""], do: params["controller_id"], else: ""
+
+    base_controller = str(b["controller_id"] || "")
+
+    acc =
+      o
+      |> put_if_str_changed("entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+      |> put_if_str_changed("name", str(params["name"] || ""), str(b["name"] || ""))
+      |> put_if_kind_changed(params["kind"], b["kind"])
+      |> put_if_int_string_changed("fate_points", params["fate_points"], b["fate_points"])
+      |> put_if_int_string_changed("refresh", params["refresh"], b["refresh"])
+
+    acc =
+      cond do
+        new_controller != "" && new_controller != base_controller ->
+          color =
+            case Enum.find(participants || [], &(&1.participant_id == new_controller)) do
+              nil -> nil
+              bp -> bp.participant.color
+            end
+
+          acc
+          |> Map.put("controller_id", new_controller)
+          |> then(fn a -> if color, do: Map.put(a, "color", color), else: a end)
+
+        new_controller == "" && base_controller != "" ->
+          Map.put(acc, "controller_id", nil)
+
+        true ->
+          acc
+      end
+
+    acc
+  end
+
+  defp merge_skill_set_detail(o, b, params) do
+    o
+    |> put_if_str_changed("entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+    |> put_if_str_changed("skill", str(params["skill"] || ""), str(b["skill"] || ""))
+    |> put_if_int_changed("rating", parse_int(params["rating"]), parse_int(b["rating"]))
+  end
+
+  defp merge_stunt_add_detail(o, b, params) do
+    o
+    |> put_if_str_changed("entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+    |> put_if_str_changed("stunt_id", str(params["stunt_id"] || ""), str(b["stunt_id"] || ""))
+    |> put_if_str_changed("name", str(params["name"] || ""), str(b["name"] || ""))
+    |> put_if_str_changed("effect", str(params["effect"] || ""), str(b["effect"] || ""))
+  end
+
+  defp merge_stunt_remove_detail(o, b, params) do
+    o
+    |> put_if_str_changed("entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+    |> put_if_str_changed("stunt_id", str(params["stunt_id"] || ""), str(b["stunt_id"] || ""))
+  end
+
+  defp merge_set_system_detail(o, b, params) do
+    put_if_str_changed(o, "system", str(params["system"] || "core"), str(b["system"] || "core"))
+  end
+
+  defp merge_fate_point_detail(o, b, params) do
+    put_if_str_changed(o, "entity_id", str(params["entity_id"] || ""), str(b["entity_id"] || ""))
+  end
+
+  defp merge_note_detail(o, b, params) do
+    br = str(b["target_ref"] || "")
+    pr = str(params["target_ref"] || "")
+
+    o
+    |> put_if_str_changed("text", str(params["text"] || ""), str(b["text"] || ""))
+    |> then(fn acc ->
+      if pr != br do
+        {tt, tid} = FateWeb.Helpers.parse_target_ref(params["target_ref"] || "")
+
+        acc
+        |> maybe_put_target(tt, tid)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp maybe_put_target(acc, nil, nil), do: acc
+
+  defp maybe_put_target(acc, tt, tid) when is_binary(tid) and tid != "" do
+    acc
+    |> Map.put("target_type", tt || "entity")
+    |> Map.put("target_id", tid)
+  end
+
+  defp maybe_put_target(acc, _, _), do: Map.delete(acc, "target_id") |> Map.delete("target_type")
+
+  defp put_if_str_changed(map, key, new_val, base_val, norm \\ &str/1) do
+    if norm.(new_val) != norm.(base_val), do: Map.put(map, key, new_val), else: map
+  end
+
+  defp put_if_bool_changed(map, key, new_val, base_val) do
+    if new_val != base_val, do: Map.put(map, key, new_val), else: map
+  end
+
+  defp put_if_int_string_changed(map, key, param_val, base_str) do
+    pn = parse_int(param_val)
+    bn = parse_int(base_str)
+
+    if pn != bn do
+      if pn == nil, do: map, else: Map.put(map, key, pn)
+    else
+      map
+    end
+  end
+
+  defp put_if_int_changed(map, key, new_int, base_int) do
+    n = new_int || 0
+    b = base_int || 0
+    if n != b, do: Map.put(map, key, n), else: map
+  end
+
+  defp put_if_kind_changed(map, param_kind, base_kind) do
+    p = str(param_kind || "")
+    b = str(base_kind || "")
+
+    cond do
+      p == "" ->
+        map
+
+      p != b ->
+        Map.put(map, "kind", p)
+
+      true ->
+        map
+    end
+  end
 
   def update_event_and_broadcast(event, attrs, bookmark_id) do
     Fate.Game.edit_event!(event, attrs)

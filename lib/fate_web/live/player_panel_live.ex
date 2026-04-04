@@ -40,6 +40,9 @@ defmodule FateWeb.PlayerPanelLive do
         |> assign(:modal, nil)
         |> assign(:form_data, %{})
         |> assign(:prefill_entity_id, nil)
+        |> assign(:modal_context_state, nil)
+        |> assign(:modal_edit_baseline, nil)
+        |> assign(:modal_original_detail, nil)
         |> assign(:embedded, embedded)
         |> assign(:splash_visible, !embedded)
 
@@ -340,7 +343,10 @@ defmodule FateWeb.PlayerPanelLive do
      socket
      |> assign(:modal, type)
      |> assign(:form_data, %{})
-     |> assign(:prefill_entity_id, params["entity_id"])}
+     |> assign(:prefill_entity_id, params["entity_id"])
+     |> assign(:modal_context_state, nil)
+     |> assign(:modal_edit_baseline, nil)
+     |> assign(:modal_original_detail, nil)}
   end
 
   def handle_event(
@@ -363,7 +369,10 @@ defmodule FateWeb.PlayerPanelLive do
          socket
          |> assign(:modal, action_type)
          |> assign(:form_data, %{})
-         |> assign(:prefill_entity_id, entity_id)}
+         |> assign(:prefill_entity_id, entity_id)
+         |> assign(:modal_context_state, nil)
+         |> assign(:modal_edit_baseline, nil)
+         |> assign(:modal_original_detail, nil)}
 
       _ ->
         {:noreply, socket}
@@ -374,7 +383,19 @@ defmodule FateWeb.PlayerPanelLive do
     event = Enum.find(socket.assigns.events, &(&1.id == event_id))
 
     if event && editable_type?(event.type) do
-      form_data = build_edit_form_data(event)
+      bookmark_id = socket.assigns.bookmark_id
+
+      {ctx_state, form_data} =
+        case Engine.state_through_event(bookmark_id, event.id) do
+          {:ok, st} ->
+            {st, build_edit_form_data(event, state_after_event: st)}
+
+          _ ->
+            {nil, build_edit_form_data(event)}
+        end
+
+      baseline = Map.new(form_data)
+      original_detail = Map.merge(%{}, event.detail || %{})
       modal = modal_for_event_type(event.type)
 
       prefill_entity_id =
@@ -395,7 +416,10 @@ defmodule FateWeb.PlayerPanelLive do
        socket
        |> assign(:modal, modal)
        |> assign(:form_data, form_data)
-       |> assign(:prefill_entity_id, prefill_entity_id)}
+       |> assign(:prefill_entity_id, prefill_entity_id)
+       |> assign(:modal_context_state, ctx_state)
+       |> assign(:modal_edit_baseline, baseline)
+       |> assign(:modal_original_detail, original_detail)}
     else
       {:noreply, socket}
     end
@@ -403,7 +427,13 @@ defmodule FateWeb.PlayerPanelLive do
 
   def handle_event("close_modal", _params, socket) do
     {:noreply,
-     socket |> assign(:modal, nil) |> assign(:form_data, %{}) |> assign(:prefill_entity_id, nil)}
+     socket
+     |> assign(:modal, nil)
+     |> assign(:form_data, %{})
+     |> assign(:prefill_entity_id, nil)
+     |> assign(:modal_context_state, nil)
+     |> assign(:modal_edit_baseline, nil)
+     |> assign(:modal_original_detail, nil)}
   end
 
   def handle_event("modal_form_changed", params, socket) do
@@ -426,6 +456,13 @@ defmodule FateWeb.PlayerPanelLive do
   end
 
   def handle_event("submit_modal", params, socket) do
+    submit_state =
+      if params["event_id"] not in [nil, ""] do
+        socket.assigns.modal_context_state || socket.assigns.state
+      else
+        socket.assigns.state
+      end
+
     result =
       case socket.assigns.modal do
         "aspect_create" ->
@@ -435,52 +472,56 @@ defmodule FateWeb.PlayerPanelLive do
               result -> result
             end
 
+          attrs = %{
+            type: :aspect_create,
+            target_id: target_id,
+            description: "Add aspect: #{params["description"]}",
+            detail: %{
+              "target_id" => target_id,
+              "target_type" => target_type,
+              "description" => params["description"],
+              "role" => params["role"] || "additional",
+              "hidden" => params["hidden"] == "true"
+            }
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :aspect_create,
-              target_id: target_id,
-              description: "Add aspect: #{params["description"]}",
-              detail: %{
-                "target_id" => target_id,
-                "target_type" => target_type,
-                "description" => params["description"],
-                "role" => params["role"] || "additional",
-                "hidden" => params["hidden"] == "true"
-              }
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "aspect_compel" ->
           target_entity =
-            if socket.assigns.state && params["target_id"],
-              do: Map.get(socket.assigns.state.entities, params["target_id"]),
+            if submit_state && params["target_id"],
+              do: Map.get(submit_state.entities, params["target_id"]),
               else: nil
 
           target_name = if target_entity, do: target_entity.name, else: "entity"
           compel_actor_id = if params["actor_id"] != "", do: params["actor_id"]
 
+          attrs = %{
+            type: :aspect_compel,
+            actor_id: compel_actor_id,
+            target_id: params["target_id"],
+            description: "Compel #{target_name}: #{params["description"]}",
+            detail: %{
+              "aspect_id" => params["aspect_id"],
+              "description" => params["description"],
+              "accepted" => params["accepted"] != "false"
+            }
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :aspect_compel,
-              actor_id: compel_actor_id,
-              target_id: params["target_id"],
-              description: "Compel #{target_name}: #{params["description"]}",
-              detail: %{
-                "aspect_id" => params["aspect_id"],
-                "description" => params["description"],
-                "accepted" => params["accepted"] != "false"
-              }
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "entity_move" ->
           zone_name =
-            if socket.assigns.state do
-              socket.assigns.state.scenes
+            if submit_state do
+              submit_state.scenes
               |> Enum.flat_map(& &1.zones)
               |> Enum.find(&(&1.id == params["zone_id"]))
               |> case do
@@ -491,30 +532,34 @@ defmodule FateWeb.PlayerPanelLive do
               "zone"
             end
 
+          attrs = %{
+            type: :entity_move,
+            actor_id: params["entity_id"],
+            description: "Move to #{zone_name}",
+            detail: %{"entity_id" => params["entity_id"], "zone_id" => params["zone_id"]}
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :entity_move,
-              actor_id: params["entity_id"],
-              description: "Move to #{zone_name}",
-              detail: %{"entity_id" => params["entity_id"], "zone_id" => params["zone_id"]}
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "scene_start" ->
+          attrs = %{
+            type: :scene_start,
+            description: "Start scene: #{params["name"]}",
+            detail: %{
+              "scene_id" => params["scene_id"] || Ash.UUID.generate(),
+              "name" => params["name"],
+              "description" => params["scene_description"],
+              "gm_notes" => params["gm_notes"]
+            }
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :scene_start,
-              description: "Start scene: #{params["name"]}",
-              detail: %{
-                "scene_id" => params["scene_id"] || Ash.UUID.generate(),
-                "name" => params["name"],
-                "description" => params["scene_description"],
-                "gm_notes" => params["gm_notes"]
-              }
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
@@ -532,38 +577,44 @@ defmodule FateWeb.PlayerPanelLive do
           end
 
         "fate_point_spend" ->
+          attrs = %{
+            type: :fate_point_spend,
+            target_id: params["entity_id"],
+            description: "Spend fate point",
+            detail: %{"entity_id" => params["entity_id"], "amount" => 1}
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :fate_point_spend,
-              target_id: params["entity_id"],
-              description: "Spend fate point",
-              detail: %{"entity_id" => params["entity_id"], "amount" => 1}
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "fate_point_earn" ->
+          attrs = %{
+            type: :fate_point_earn,
+            target_id: params["entity_id"],
+            description: "Earn fate point",
+            detail: %{"entity_id" => params["entity_id"], "amount" => 1}
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :fate_point_earn,
-              target_id: params["entity_id"],
-              description: "Earn fate point",
-              detail: %{"entity_id" => params["entity_id"], "amount" => 1}
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "fate_point_refresh" ->
+          attrs = %{
+            type: :fate_point_refresh,
+            target_id: params["entity_id"],
+            description: "Refresh fate points",
+            detail: %{"entity_id" => params["entity_id"]}
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :fate_point_refresh,
-              target_id: params["entity_id"],
-              description: "Refresh fate points",
-              detail: %{"entity_id" => params["entity_id"]}
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
@@ -611,11 +662,15 @@ defmodule FateWeb.PlayerPanelLive do
 
           create_or_update_event(
             params,
-            %{
-              type: :entity_create,
-              description: "Create #{params["name"]}",
-              detail: detail
-            },
+            finalize_modal_submit(
+              socket,
+              params,
+              %{
+                type: :entity_create,
+                description: "Create #{params["name"]}",
+                detail: detail
+              }
+            ),
             socket.assigns.bookmark_id
           )
 
@@ -639,73 +694,83 @@ defmodule FateWeb.PlayerPanelLive do
             |> maybe_put_int("fate_points", params["fate_points"])
             |> maybe_put_int("refresh", params["refresh"])
 
+          attrs = %{
+            type: :entity_modify,
+            target_id: params["entity_id"],
+            description: "Edit #{params["name"] || "entity"}",
+            detail: detail
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :entity_modify,
-              target_id: params["entity_id"],
-              description: "Edit #{params["name"] || "entity"}",
-              detail: detail
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "skill_set" ->
+          attrs = %{
+            type: :skill_set,
+            target_id: params["entity_id"],
+            description: "#{params["skill"]} → +#{params["rating"]}",
+            detail: %{
+              "entity_id" => params["entity_id"],
+              "skill" => params["skill"],
+              "rating" => parse_int(params["rating"]) || 0
+            }
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :skill_set,
-              target_id: params["entity_id"],
-              description: "#{params["skill"]} → +#{params["rating"]}",
-              detail: %{
-                "entity_id" => params["entity_id"],
-                "skill" => params["skill"],
-                "rating" => parse_int(params["rating"]) || 0
-              }
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "stunt_add" ->
+          attrs = %{
+            type: :stunt_add,
+            target_id: params["entity_id"],
+            description: "Stunt: #{params["name"]}",
+            detail: %{
+              "entity_id" => params["entity_id"],
+              "stunt_id" => params["stunt_id"] || Ash.UUID.generate(),
+              "name" => params["name"],
+              "effect" => params["effect"]
+            }
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :stunt_add,
-              target_id: params["entity_id"],
-              description: "Stunt: #{params["name"]}",
-              detail: %{
-                "entity_id" => params["entity_id"],
-                "stunt_id" => params["stunt_id"] || Ash.UUID.generate(),
-                "name" => params["name"],
-                "effect" => params["effect"]
-              }
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "stunt_remove" ->
+          attrs = %{
+            type: :stunt_remove,
+            target_id: params["entity_id"],
+            description: "Remove stunt",
+            detail: %{
+              "entity_id" => params["entity_id"],
+              "stunt_id" => params["stunt_id"]
+            }
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :stunt_remove,
-              target_id: params["entity_id"],
-              description: "Remove stunt",
-              detail: %{
-                "entity_id" => params["entity_id"],
-                "stunt_id" => params["stunt_id"]
-              }
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
         "set_system" ->
+          attrs = %{
+            type: :set_system,
+            description: "Set system: #{params["system"]}",
+            detail: %{"system" => params["system"]}
+          }
+
           create_or_update_event(
             params,
-            %{
-              type: :set_system,
-              description: "Set system: #{params["system"]}",
-              detail: %{"system" => params["system"]}
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
@@ -716,13 +781,11 @@ defmodule FateWeb.PlayerPanelLive do
             |> put_non_empty("description", params["scene_description"])
             |> put_non_empty("gm_notes", params["gm_notes"])
 
+          attrs = %{type: :scene_modify, description: "Edit scene", detail: detail}
+
           create_or_update_event(
             params,
-            %{
-              type: :scene_modify,
-              description: "Edit scene",
-              detail: detail
-            },
+            finalize_modal_submit(socket, params, attrs),
             socket.assigns.bookmark_id
           )
 
@@ -740,14 +803,16 @@ defmodule FateWeb.PlayerPanelLive do
                   else: d
               end)
 
+            attrs = %{
+              type: :note,
+              target_id: target_id,
+              description: text,
+              detail: detail
+            }
+
             create_or_update_event(
               params,
-              %{
-                type: :note,
-                target_id: target_id,
-                description: text,
-                detail: detail
-              },
+              finalize_modal_submit(socket, params, attrs),
               socket.assigns.bookmark_id
             )
           else
@@ -764,7 +829,10 @@ defmodule FateWeb.PlayerPanelLive do
          socket
          |> assign(:modal, nil)
          |> assign(:form_data, %{})
-         |> assign(:prefill_entity_id, nil)}
+         |> assign(:prefill_entity_id, nil)
+         |> assign(:modal_context_state, nil)
+         |> assign(:modal_edit_baseline, nil)
+         |> assign(:modal_original_detail, nil)}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, inspect(reason))}
@@ -832,6 +900,7 @@ defmodule FateWeb.PlayerPanelLive do
         <.action_modal
           modal={@modal}
           state={@state}
+          modal_context_state={@modal_context_state}
           prefill_entity_id={@prefill_entity_id}
           form_data={@form_data}
           participants={@participants}
@@ -1034,6 +1103,23 @@ defmodule FateWeb.PlayerPanelLive do
   end
 
   # --- Helpers ---
+
+  defp finalize_modal_submit(socket, params, attrs) do
+    if params["event_id"] not in [nil, ""] && socket.assigns.modal_edit_baseline do
+      merged =
+        merge_edit_detail(
+          socket.assigns.modal,
+          socket.assigns.modal_original_detail || %{},
+          socket.assigns.modal_edit_baseline,
+          params,
+          socket.assigns.participants
+        )
+
+      Map.put(attrs, :detail, merged)
+    else
+      attrs
+    end
+  end
 
   defp init_state(socket, bookmark_id) do
     subscribe_all(bookmark_id, socket.assigns.current_participant_id)

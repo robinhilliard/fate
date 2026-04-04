@@ -20,6 +20,27 @@ defmodule Fate.Engine do
     end
   end
 
+  @doc """
+  Replays the full bookmark event chain through `event_id` (inclusive) and returns
+  derived state as of immediately after that event. Used for event-log edit modals.
+  """
+  def state_through_event(bookmark_id, event_id) do
+    with {:ok, bookmark} when bookmark != nil <- Game.get_bookmark(bookmark_id),
+         {:ok, events} <- load_event_chain(bookmark.head_event_id) do
+      case Enum.find_index(events, &(&1.id == event_id)) do
+        nil ->
+          {:error, :event_not_in_chain}
+
+        idx ->
+          prefix = Enum.take(events, idx + 1)
+          {:ok, Replay.derive(bookmark_id, prefix)}
+      end
+    else
+      {:ok, nil} -> {:error, :not_found}
+      error -> error
+    end
+  end
+
   def append_event(bookmark_id, attrs) do
     with {:ok, bookmark} when bookmark != nil <- Game.get_bookmark(bookmark_id) do
       attrs = Map.put(attrs, :parent_id, bookmark.head_event_id)

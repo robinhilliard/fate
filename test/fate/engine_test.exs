@@ -69,7 +69,7 @@ defmodule Fate.EngineTest do
 
   describe "load_event_chain/1" do
     test "returns events in timestamp order" do
-      {_bookmark, [root, scene]} = create_bookmark()
+      {_bookmark, [_root, scene]} = create_bookmark()
       {:ok, chain} = Engine.load_event_chain(scene.id)
 
       assert length(chain) == 2
@@ -80,6 +80,35 @@ defmodule Fate.EngineTest do
 
     test "returns empty list for nil" do
       assert {:ok, []} = Engine.load_event_chain(nil)
+    end
+  end
+
+  describe "state_through_event/2" do
+    test "returns state after prefix through the given event id" do
+      {bookmark, [_, scene]} = create_bookmark()
+      eid = Ash.UUID.generate()
+
+      assert {:ok, _state, event} =
+               Engine.append_event(bookmark.id, %{
+                 type: :entity_create,
+                 description: "Create hero",
+                 detail: %{
+                   "entity_id" => eid,
+                   "name" => "Hero",
+                   "kind" => "pc"
+                 }
+               })
+
+      assert {:ok, st_scene} = Engine.state_through_event(bookmark.id, scene.id)
+      refute Map.has_key?(st_scene.entities, eid)
+
+      assert {:ok, st_entity} = Engine.state_through_event(bookmark.id, event.id)
+      assert st_entity.entities[eid].name == "Hero"
+    end
+
+    test "returns error when event is not in chain" do
+      {bookmark, _} = create_bookmark()
+      assert {:error, :event_not_in_chain} = Engine.state_through_event(bookmark.id, Ash.UUID.generate())
     end
   end
 

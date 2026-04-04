@@ -422,13 +422,23 @@ defmodule FateWeb.ActionComponents do
   def action_modal(%{modal: nil} = assigns), do: ~H""
 
   def action_modal(assigns) do
-    entities = if assigns.state, do: Map.values(assigns.state.entities), else: []
+    assigns = assign_new(assigns, :modal_context_state, fn -> nil end)
     editing? = assigns.form_data["event_id"] != nil
+
+    modal_state =
+      if editing? do
+        assigns[:modal_context_state] || assigns.state
+      else
+        assigns.state
+      end
+
+    entities = if modal_state, do: Map.values(modal_state.entities), else: []
 
     assigns =
       assigns
       |> assign(:entities, entities)
       |> assign(:editing?, editing?)
+      |> assign(:modal_state, modal_state)
 
     ~H"""
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -442,7 +452,7 @@ defmodule FateWeb.ActionComponents do
           <.modal_fields
             modal={@modal}
             entities={@entities}
-            state={@state}
+            state={@modal_state}
             prefill_entity_id={@prefill_entity_id}
             form_data={@form_data}
             participants={@participants}
@@ -1054,9 +1064,16 @@ defmodule FateWeb.ActionComponents do
     editing? = fd["event_id"] != nil
 
     scenes =
-      if assigns.state,
-        do: Enum.filter(assigns.state.scenes, &(&1.status == :active)),
-        else: []
+      cond do
+        editing? && assigns.state ->
+          assigns.state.scenes
+
+        assigns.state ->
+          Enum.filter(assigns.state.scenes, &(&1.status == :active))
+
+        true ->
+          []
+      end
 
     first_scene = List.first(scenes)
 
@@ -1150,15 +1167,11 @@ defmodule FateWeb.ActionComponents do
   defp note_target_options(nil), do: []
 
   defp note_target_options(state) do
-    active_scene = Enum.find(state.scenes, &(&1.status == :active))
-
     scene_opts =
-      if active_scene do
-        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
-          Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
-      else
-        []
-      end
+      Enum.flat_map(state.scenes, fn scene ->
+        [{"scene:#{scene.id}", "Scene: #{scene.name}"}] ++
+          Enum.map(scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
+      end)
 
     entity_opts =
       state.entities
