@@ -4,6 +4,7 @@ defmodule FateWeb.TableLive do
   alias Fate.Engine
   alias Fate.Game.Bookmarks
 
+  import FateWeb.ActionHelpers, only: [maybe_put_int: 3, put_non_empty: 3]
   import FateWeb.TableComponents
 
   @impl true
@@ -405,6 +406,18 @@ defmodule FateWeb.TableLive do
     {:noreply, assign(socket, :table_modal, {"note_create_for", entity_id})}
   end
 
+  def handle_event(
+        "ring_action",
+        %{"action" => "edit_entity", "entity-id" => entity_id},
+        socket
+      ) do
+    if can_edit_entity?(socket, entity_id) do
+      {:noreply, assign(socket, :table_modal, {"entity_edit", entity_id})}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("ring_action", %{"action" => action, "entity-id" => entity_id}, socket) do
     branch_id = socket.assigns.bookmark_id
 
@@ -747,6 +760,56 @@ defmodule FateWeb.TableLive do
 
           nil
 
+        {"entity_edit", modal_entity_id} ->
+          if params["entity_id"] == modal_entity_id &&
+               can_edit_entity?(socket, modal_entity_id) do
+            entity = Map.get(socket.assigns.state.entities, modal_entity_id)
+
+            if entity do
+              detail =
+                %{"entity_id" => modal_entity_id}
+                |> put_non_empty("name", params["name"])
+                |> then(fn d ->
+                  if socket.assigns.is_gm do
+                    edit_controller_id =
+                      if params["controller_id"] not in [nil, ""],
+                        do: params["controller_id"]
+
+                    edit_color =
+                      if edit_controller_id do
+                        bp =
+                          Enum.find(
+                            socket.assigns.participants,
+                            &(&1.participant_id == edit_controller_id)
+                          )
+
+                        if bp, do: bp.participant.color, else: nil
+                      end
+
+                    d
+                    |> put_non_empty("kind", params["kind"])
+                    |> put_non_empty("controller_id", edit_controller_id)
+                    |> put_non_empty("color", edit_color)
+                  else
+                    d
+                  end
+                end)
+                |> maybe_put_int("fate_points", params["fate_points"])
+                |> maybe_put_int("refresh", params["refresh"])
+
+              label = String.trim(params["name"] || "") |> then(&if(&1 != "", do: &1, else: entity.name))
+
+              Fate.Engine.append_event(socket.assigns.bookmark_id, %{
+                type: :entity_modify,
+                target_id: modal_entity_id,
+                description: "Edit #{label}",
+                detail: detail
+              })
+            end
+          end
+
+          nil
+
         _ ->
           nil
       end
@@ -1071,6 +1134,7 @@ defmodule FateWeb.TableLive do
               entity={entity}
               is_gm={@is_gm}
               is_observer={@is_observer}
+              current_participant_id={@current_participant_id}
               selected={%{id: entity.id, type: "entity"} in @selection}
               expanded={MapSet.member?(@expanded_entities, entity.id)}
               can_expand={@is_gm || entity.kind == :pc}
@@ -1091,6 +1155,7 @@ defmodule FateWeb.TableLive do
                 entity={entity}
                 is_gm={@is_gm}
                 is_observer={@is_observer}
+                current_participant_id={@current_participant_id}
                 selected={%{id: entity.id, type: "entity"} in @selection}
                 expanded={MapSet.member?(@expanded_entities, entity.id)}
                 can_expand={true}
@@ -1111,6 +1176,7 @@ defmodule FateWeb.TableLive do
               entity={entity}
               is_gm={@is_gm}
               is_observer={@is_observer}
+              current_participant_id={@current_participant_id}
               selected={%{id: entity.id, type: "entity"} in @selection}
               expanded={MapSet.member?(@expanded_entities, entity.id)}
               can_expand={@is_gm || entity.kind == :pc}
@@ -1214,6 +1280,8 @@ defmodule FateWeb.TableLive do
           state={@state}
           current_scene_id={@current_scene_id}
           current_participant_id={@current_participant_id}
+          is_gm={@is_gm}
+          participants={@participants}
         />
       <% end %>
 
@@ -1456,6 +1524,14 @@ defmodule FateWeb.TableLive do
       scene_level ++ zone_level
     end)
     |> Enum.filter(fn {aspect, _zone_id} -> is_gm || !aspect.hidden end)
+  end
+
+  defp can_edit_entity?(socket, entity_id) do
+    entity = Map.get(socket.assigns.state.entities, entity_id)
+
+    entity &&
+      (socket.assigns.is_gm ||
+         entity.controller_id == socket.assigns.current_participant_id)
   end
 
   defp panel_assign("gm"), do: :gm_panel_open

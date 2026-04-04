@@ -15,6 +15,7 @@ defmodule FateWeb.TableComponents do
         if assigns.entity.controller_id, do: assigns.entity.color || "#6b7280", else: @gm_color
       end)
       |> assign_new(:is_observer, fn -> false end)
+      |> assign_new(:current_participant_id, fn -> nil end)
       |> assign_new(:expanded, fn -> false end)
       |> assign_new(:can_expand, fn -> false end)
 
@@ -104,7 +105,11 @@ defmodule FateWeb.TableComponents do
                 {@entity.fate_points}
               <% end %>
             </div>
-            <.entity_ring entity={@entity} is_gm={@is_gm} />
+            <.entity_ring
+              entity={@entity}
+              is_gm={@is_gm}
+              current_participant_id={@current_participant_id}
+            />
           </div>
         <% end %>
       </div>
@@ -553,6 +558,13 @@ defmodule FateWeb.TableComponents do
   end
 
   def entity_ring(assigns) do
+    assigns = assign_new(assigns, :current_participant_id, fn -> nil end)
+
+    can_edit =
+      assigns.is_gm || assigns.entity.controller_id == assigns.current_participant_id
+
+    assigns = assign(assigns, :can_edit_entity, can_edit)
+
     ~H"""
     <div class="context-ring" id={"ring-#{@entity.id}"}>
       <%= if @entity.fate_points do %>
@@ -634,6 +646,17 @@ defmodule FateWeb.TableComponents do
       >
         <.icon name="hero-pencil-square" class="w-3.5 h-3.5" />
       </button>
+      <%= if @can_edit_entity do %>
+        <button
+          class="ring-item"
+          phx-click="ring_action"
+          phx-value-action="edit_entity"
+          phx-value-entity-id={@entity.id}
+          data-tooltip="Edit entity"
+        >
+          <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+        </button>
+      <% end %>
       <%= if @is_gm do %>
         <button
           class="ring-item"
@@ -1109,6 +1132,163 @@ defmodule FateWeb.TableComponents do
             </button>
           </div>
         </form>
+      </div>
+    </div>
+    """
+  end
+
+  def table_modal(%{modal: {"entity_edit", entity_id}} = assigns) do
+    assigns =
+      assigns
+      |> assign_new(:is_gm, fn -> false end)
+      |> assign_new(:participants, fn -> [] end)
+
+    entity =
+      if assigns[:state],
+        do: Map.get(assigns.state.entities, entity_id),
+        else: nil
+
+    controller_options =
+      Enum.map(assigns.participants, fn bp ->
+        {bp.participant_id, "#{bp.participant.name} (#{bp.role})"}
+      end)
+
+    e_name = if entity, do: entity.name, else: ""
+    e_kind = if entity, do: to_string(entity.kind), else: ""
+    e_controller = if entity, do: entity.controller_id, else: nil
+
+    e_fp =
+      if entity && entity.fate_points != nil,
+        do: to_string(entity.fate_points),
+        else: ""
+
+    e_refresh =
+      if entity && entity.refresh != nil,
+        do: to_string(entity.refresh),
+        else: ""
+
+    assigns =
+      assigns
+      |> assign(:edit_entity_id, entity_id)
+      |> assign(:edit_entity, entity)
+      |> assign(:e_name, e_name)
+      |> assign(:e_kind, e_kind)
+      |> assign(:e_controller, e_controller)
+      |> assign(:e_fp, e_fp)
+      |> assign(:e_refresh, e_refresh)
+      |> assign(:controller_options, controller_options)
+
+    ~H"""
+    <div
+      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+      phx-window-keydown="close_table_modal"
+      phx-key="escape"
+    >
+      <div class="bg-amber-950 border border-amber-700/40 rounded-xl p-6 w-96 max-h-[85vh] overflow-y-auto shadow-2xl">
+        <h3
+          class="text-lg font-bold text-amber-100 mb-4"
+          style="font-family: 'Permanent Marker', cursive;"
+        >
+          <%= if @edit_entity do %>
+            Edit {@edit_entity.name}
+          <% else %>
+            Edit entity
+          <% end %>
+        </h3>
+        <%= if @edit_entity do %>
+          <form phx-submit="submit_table_modal" id="table-modal-entity-edit-form" class="space-y-3">
+            <input type="hidden" name="entity_id" value={@edit_entity_id} />
+            <div>
+              <label class="block text-sm text-amber-200/70 mb-1" for="table-entity-edit-name">Name</label>
+              <input
+                type="text"
+                name="name"
+                id="table-entity-edit-name"
+                value={@e_name}
+                class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+              />
+            </div>
+            <%= if @is_gm do %>
+              <div>
+                <label class="block text-sm text-amber-200/70 mb-1" for="table-entity-edit-kind">Kind</label>
+                <select
+                  name="kind"
+                  id="table-entity-edit-kind"
+                  class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+                >
+                  <option value="" selected={@e_kind == ""}>— no change —</option>
+                  <option value="pc" selected={@e_kind == "pc"}>PC</option>
+                  <option value="npc" selected={@e_kind == "npc"}>NPC</option>
+                  <option value="mook_group" selected={@e_kind == "mook_group"}>Mook Group</option>
+                  <option value="organization" selected={@e_kind == "organization"}>Organization</option>
+                  <option value="vehicle" selected={@e_kind == "vehicle"}>Vehicle</option>
+                  <option value="item" selected={@e_kind == "item"}>Item</option>
+                  <option value="hazard" selected={@e_kind == "hazard"}>Hazard</option>
+                  <option value="custom" selected={@e_kind == "custom"}>Custom</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm text-amber-200/70 mb-1" for="table-entity-edit-controller">
+                  Controller
+                </label>
+                <select
+                  name="controller_id"
+                  id="table-entity-edit-controller"
+                  class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm"
+                >
+                  <option value="" selected={is_nil(@e_controller)}>None (GM-controlled)</option>
+                  <%= for {id, label} <- @controller_options do %>
+                    <option value={id} selected={id == @e_controller}>{label}</option>
+                  <% end %>
+                </select>
+              </div>
+            <% end %>
+            <div>
+              <label class="block text-sm text-amber-200/70 mb-1" for="table-entity-edit-fp">Fate Points</label>
+              <input
+                type="text"
+                name="fate_points"
+                id="table-entity-edit-fp"
+                value={@e_fp}
+                class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+              />
+            </div>
+            <div>
+              <label class="block text-sm text-amber-200/70 mb-1" for="table-entity-edit-refresh">Refresh</label>
+              <input
+                type="text"
+                name="refresh"
+                id="table-entity-edit-refresh"
+                value={@e_refresh}
+                class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
+              />
+            </div>
+            <div class="flex gap-2 pt-2">
+              <button
+                type="submit"
+                class="flex-1 py-2 bg-green-800/60 border border-green-600/30 rounded-lg hover:bg-green-700/60 text-green-200 font-bold text-sm"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                phx-click="close_table_modal"
+                class="flex-1 py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        <% else %>
+          <p class="text-sm text-amber-200/60 mb-4">This entity is no longer on the table.</p>
+          <button
+            type="button"
+            phx-click="close_table_modal"
+            class="w-full py-2 bg-red-900/40 border border-red-700/30 rounded-lg hover:bg-red-800/40 text-red-200 text-sm"
+          >
+            Close
+          </button>
+        <% end %>
       </div>
     </div>
     """
