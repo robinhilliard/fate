@@ -909,40 +909,159 @@ defmodule FateWeb.PlayerPanelLive do
         export default {
           mounted() {
             this._ignoreScroll = false
-            this.el.addEventListener("scroll", () => {
-              if (this._ignoreScroll) return
+            this._layoutMute = false
+            this._restoreScheduled = false
+            this._wasAtBottom = true
+            this._savedScrollTop = 0
+            this._prevScrollTop = null
+            this._lastCH = null
+            this._mutationThisFrame = false
+            this._restoreIntent = null
+            this._scrollTopAtIntent = 0
+
+            /*
+             * Opening the modal shrinks this flex child: the browser can clamp scrollTop to 0 in
+             * the same frame the viewport height changes. LV often does not run beforeUpdate/updated
+             * on #event-log when only the modal sibling changes, so we also watch resize + mutations.
+             * We repair (1) tail + viewport height change, or (2) tail + DOM mutation + jump to top,
+             * so Home/end-key jumps are not confused with layout when height did not change.
+             *
+             * Edit/delete run phx-click after layout starts; intermediate scroll events can flip
+             * _wasAtBottom before ResizeObserver fires. Capture intent on pointerdown (capture phase)
+             * before any of that.
+             */
+            this._onPointerDown = (e) => {
+              const btn = e.target.closest(
+                'button[phx-click="edit_event"], button[phx-click="delete_event"]'
+              )
+              if (!btn || !this.el.contains(btn)) return
               const { scrollTop, scrollHeight, clientHeight } = this.el
               const fromBottom = scrollHeight - scrollTop - clientHeight
-              this._userScrolledUp = fromBottom > 40
-            })
-            this._scrollToBottom()
-          },
-          // Capture scroll intent *before* morph: LV can reset scrollTop and fire scroll,
-          // which wrongly sets _userScrolledUp and strands tail-followers at the top.
-          beforeUpdate() {
-            const { scrollTop, scrollHeight, clientHeight } = this.el
-            const fromBottom = scrollHeight - scrollTop - clientHeight
-            this._snap = {
-              scrollTop,
-              wasAtBottom: fromBottom <= 40
+              if (fromBottom <= 80) {
+                this._restoreIntent = "tail"
+              } else {
+                this._restoreIntent = "preserve"
+                this._scrollTopAtIntent = scrollTop
+              }
             }
+            this.el.addEventListener("pointerdown", this._onPointerDown, true)
+
+            this._captureScrollIntent = () => {
+              if (this._ignoreScroll || this._layoutMute) return
+              const { scrollTop, scrollHeight, clientHeight } = this.el
+              const maxS = Math.max(0, scrollHeight - clientHeight)
+              const prev = this._prevScrollTop
+              const chChanged = this._lastCH != null && this._lastCH !== clientHeight
+              const jumpedToTop =
+                scrollTop < 8 &&
+                prev != null &&
+                prev > 80 &&
+                maxS > 100 &&
+                this._wasAtBottom
+
+              if (jumpedToTop && (chChanged || this._mutationThisFrame)) {
+                this._ignoreScroll = true
+                this.el.scrollTop = scrollHeight
+                this._ignoreScroll = false
+                this._prevScrollTop = this.el.scrollTop
+                this._wasAtBottom = true
+                this._savedScrollTop = this.el.scrollTop
+                this._lastCH = clientHeight
+                return
+              }
+
+              this._prevScrollTop = scrollTop
+              this._lastCH = clientHeight
+              const fromBottom = scrollHeight - scrollTop - clientHeight
+              this._wasAtBottom = fromBottom <= 40
+              this._savedScrollTop = scrollTop
+            }
+            this.el.addEventListener("scroll", this._captureScrollIntent, { passive: true })
+
+            this._restoreNow = () => {
+              if (!this.el?.isConnected) return
+              const intent = this._restoreIntent
+              const wantTail =
+                intent === "tail" ||
+                (intent == null && this._wasAtBottom)
+              const savedTop =
+                intent === "preserve" ? this._scrollTopAtIntent : this._savedScrollTop
+
+              const { scrollHeight, clientHeight } = this.el
+              if (scrollHeight <= clientHeight) return
+
+              this._restoreIntent = null
+              this._layoutMute = true
+              this._ignoreScroll = true
+
+              if (wantTail) {
+                this.el.scrollTop = scrollHeight
+              } else {
+                const maxScroll = Math.max(0, scrollHeight - clientHeight)
+                this.el.scrollTop = Math.min(savedTop, maxScroll)
+              }
+
+              this._prevScrollTop = this.el.scrollTop
+              this._lastCH = clientHeight
+
+              requestAnimationFrame(() => {
+                if (wantTail && this.el.isConnected) {
+                  this.el.scrollTop = this.el.scrollHeight
+                }
+                requestAnimationFrame(() => {
+                  if (wantTail && this.el.isConnected) {
+                    this.el.scrollTop = this.el.scrollHeight
+                  }
+                  if (this.el.isConnected) {
+                    const sh = this.el.scrollHeight
+                    const ch = this.el.clientHeight
+                    const st = this.el.scrollTop
+                    this._wasAtBottom = sh - st - ch <= 40
+                    this._savedScrollTop = st
+                  }
+                  this._ignoreScroll = false
+                  this._layoutMute = false
+                })
+              })
+            }
+
+            // Double rAF: flex + LV may need an extra frame before scrollHeight is stable.
+            this._scheduleRestore = () => {
+              if (this._restoreScheduled) return
+              this._restoreScheduled = true
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  this._restoreScheduled = false
+                  this._restoreNow()
+                })
+              })
+            }
+
+            this._mo = new MutationObserver(() => {
+              this._mutationThisFrame = true
+              requestAnimationFrame(() => {
+                this._mutationThisFrame = false
+              })
+              this._scheduleRestore()
+            })
+            this._mo.observe(this.el, { childList: true, subtree: true })
+
+            this._ro = new ResizeObserver(() => this._scheduleRestore())
+            this._ro.observe(this.el)
+
+            this._scheduleRestore()
+          },
+          beforeUpdate() {
+            this._captureScrollIntent()
           },
           updated() {
-            const snap = this._snap
-            this._ignoreScroll = true
-            const stickToBottom = !snap || snap.wasAtBottom
-            if (stickToBottom) {
-              this.el.scrollTop = this.el.scrollHeight
-            } else {
-              const maxScroll = Math.max(0, this.el.scrollHeight - this.el.clientHeight)
-              this.el.scrollTop = Math.min(snap.scrollTop, maxScroll)
-            }
-            requestAnimationFrame(() => { this._ignoreScroll = false })
+            this._scheduleRestore()
           },
-          _scrollToBottom() {
-            this._ignoreScroll = true
-            this.el.scrollTop = this.el.scrollHeight
-            requestAnimationFrame(() => { this._ignoreScroll = false })
+          destroyed() {
+            this.el.removeEventListener("scroll", this._captureScrollIntent)
+            this.el.removeEventListener("pointerdown", this._onPointerDown, true)
+            this._mo?.disconnect()
+            this._ro?.disconnect()
           }
         }
       </script>

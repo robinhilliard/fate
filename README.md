@@ -233,3 +233,7 @@ SHOW_BROWSER=1 mix test test/fate_web/features/  # Watch browser tests run
 ## Fate SRD Attribution
 
 This work is based on Fate Core System and Fate Accelerated Edition (found at https://fate-srd.com/), products of Evil Hat Productions, LLC, developed, authored, and edited by Leonard Balsera, Brian Engard, Jeremy Keller, Ryan Macklin, Mike Olson, Clark Valentine, Amanda Valentine, Fred Hicks, and Rob Donoghue, and licensed for our use under the [Creative Commons Attribution 3.0 Unported](http://creativecommons.org/licenses/by/3.0/) license.
+
+### Translations
+
+The app uses Phoenix [Gettext](https://hexdocs.pm/gettext) and is developed in English. **Forks and contributors** who add other locales should treat licensing separately from the paragraph above: Evil Hat’s CC-BY terms apply to the official English SRDs (see [Official Licensing](https://fate-srd.com/official-licensing-fate)), but they do **not** automatically allow reusing wording from **published translations** (regional editions, third-party localized SRDs, wikis, and similar). Those texts are usually copyrighted by their publishers or translators. If you ship localized UI or rule wording, either translate from the **official downloadable CC-BY SRD files** (with correct attribution), get permission from the rights holder, or confirm the source’s license yourself—this repository does not vet or bundle non-English Fate text.
