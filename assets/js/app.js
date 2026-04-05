@@ -128,6 +128,9 @@ const DraggableToken = {
 
       e.dataTransfer.setData("entity-id", entityId)
       e.dataTransfer.setData("entity-name", name)
+      if (this.el.dataset.source) {
+        e.dataTransfer.setData("source", this.el.dataset.source)
+      }
       e.dataTransfer.effectAllowed = "move"
 
       const ghost = document.createElement("div")
@@ -142,10 +145,14 @@ const DraggableToken = {
     })
 
     this._cleanupTouch = makeTouchDraggable(this.el, {
-      getData: () => ({
-        "entity-id": this.el.dataset.entityId,
-        "entity-name": this.el.dataset.entityName,
-      }),
+      getData: () => {
+        const data = {
+          "entity-id": this.el.dataset.entityId,
+          "entity-name": this.el.dataset.entityName,
+        }
+        if (this.el.dataset.source) data["source"] = this.el.dataset.source
+        return data
+      },
       createGhost: () => {
         const ghost = document.createElement("div")
         ghost.className = "drag-ghost zone-token"

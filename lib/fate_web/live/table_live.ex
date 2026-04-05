@@ -1155,6 +1155,7 @@ defmodule FateWeb.TableLive do
                       data-entity-id={entity.id}
                       data-entity-name={entity.name}
                       data-entity-color={entity.color || "#6b7280"}
+                      data-source="zone"
                     >
                       {entity.name}
                     </div>

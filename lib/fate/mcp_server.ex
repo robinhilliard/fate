@@ -9,6 +9,7 @@ defmodule Fate.McpServer do
   require Ash.Query
   alias Fate.Engine
   alias Fate.Engine.Replay
+  alias Fate.Game.Bookmarks
 
   @capabilities %{
     "tools" => %{},
@@ -105,7 +106,12 @@ defmodule Fate.McpServer do
         inputSchema: %{
           type: "object",
           properties: %{
-            limit: %{type: "integer", description: "Max events to return (default 20)"}
+            limit: %{type: "integer", description: "Max events to return (default 20)"},
+            full: %{
+              type: "boolean",
+              description:
+                "If true, return the full event chain (GM view) including events from parent bookmarks. Default false (player view, bounded by bookmark boundary)."
+            }
           }
         }
       },
@@ -676,6 +682,78 @@ defmodule Fate.McpServer do
         }
       },
       %{
+        name: "edit_event",
+        description:
+          "Edit an existing event's detail fields. Merges the provided fields into the event's existing detail map, preserving unmentioned fields.",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            event_id: %{type: "string", description: "The event ID to edit"},
+            detail: %{
+              type: "object",
+              description: "Fields to merge into the event's detail map"
+            },
+            description: %{type: "string", description: "New description text (optional)"}
+          },
+          required: ["event_id"]
+        }
+      },
+      %{
+        name: "resolve_shifts",
+        description:
+          "Resolve shifts from an exchange. Sets pending shifts on the target entity after comparing attack vs defend rolls.",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            target_id: %{
+              type: "string",
+              description: "Entity receiving the shifts"
+            },
+            attacker_id: %{
+              type: "string",
+              description: "Entity that delivered the shifts"
+            },
+            shifts: %{type: "integer", description: "Number of shifts to apply"},
+            exchange_id: %{type: "string", description: "Exchange ID this belongs to"}
+          },
+          required: ["target_id", "shifts"]
+        }
+      },
+      %{
+        name: "set_campaign",
+        description: "Set or rename the campaign",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            name: %{type: "string", description: "Campaign name"}
+          },
+          required: ["name"]
+        }
+      },
+      %{
+        name: "list_participants",
+        description:
+          "List participants at the current bookmark's table with their names, roles, and colors",
+        inputSchema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "reorder_event",
+        description:
+          "Move an event to a new position in the chain, placing it immediately after the specified event",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            event_id: %{type: "string", description: "Event ID to move"},
+            after_event_id: %{
+              type: "string",
+              description:
+                "Place the event after this one. Omit or pass null to move to the very beginning."
+            }
+          },
+          required: ["event_id"]
+        }
+      },
+      %{
         name: "summarise_timeline",
         description: """
         Summarise the events in the current bookmark's timeline (since the last bookmark boundary — never include events from parent bookmarks).
@@ -780,8 +858,19 @@ defmodule Fate.McpServer do
 
   def handle_call_tool("get_action_log", args, state) do
     limit = args["limit"] || 20
+    full = args["full"] || false
 
-    with {:ok, events} <- Engine.load_player_events(state.bookmark_id) do
+    result =
+      if full do
+        with {:ok, bookmark} when bookmark != nil <- Fate.Game.get_bookmark(state.bookmark_id),
+             {:ok, events} <- Engine.load_event_chain(bookmark.head_event_id) do
+          {:ok, events}
+        end
+      else
+        Engine.load_player_events(state.bookmark_id)
+      end
+
+    with {:ok, events} <- result do
       recent = events |> Enum.take(-limit) |> Enum.map(&event_summary/1)
       {:ok, [%{type: "text", text: Jason.encode!(recent, pretty: true)}], state}
     else
@@ -992,19 +1081,7 @@ defmodule Fate.McpServer do
     with {:ok, bookmarks} <-
            Fate.Game.Bookmark |> Ash.Query.filter(name: bookmark_name) |> Ash.read(),
          %Fate.Game.Bookmark{} = parent <- List.first(bookmarks) || {:error, :not_found},
-         {:ok, bmk_event} <-
-           Fate.Game.append_event(%{
-             parent_id: parent.head_event_id,
-             type: :bookmark_create,
-             description: new_name,
-             detail: %{"name" => new_name}
-           }),
-         {:ok, new_bm} <-
-           Fate.Game.create_bookmark(%{
-             name: new_name,
-             head_event_id: bmk_event.id,
-             parent_bookmark_id: parent.id
-           }) do
+         {:ok, new_bm} <- Bookmarks.fork(parent.id, new_name) do
       {:ok,
        [
          %{
@@ -1022,29 +1099,7 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("switch_bookmark", args, state) do
-    bm_name = args["bookmark_name"]
-
-    bookmark =
-      cond do
-        args["bookmark_id"] ->
-          case Fate.Game.get_bookmark(args["bookmark_id"]) do
-            {:ok, b} -> b
-            _ -> nil
-          end
-
-        bm_name ->
-          case Fate.Game.Bookmark
-               |> Ash.Query.filter(name: bm_name)
-               |> Ash.read() do
-            {:ok, [b | _]} -> b
-            _ -> nil
-          end
-
-        true ->
-          nil
-      end
-
-    case bookmark do
+    case resolve_bookmark(args) do
       nil ->
         {:error, %{code: -32000, message: "Bookmark not found"}, state}
 
@@ -1481,37 +1536,17 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("delete_bookmark", args, state) do
-    bm_name = args["bookmark_name"]
+    bookmark_id = resolve_bookmark_id(args)
 
-    bookmark =
-      cond do
-        args["bookmark_id"] ->
-          case Fate.Game.get_bookmark(args["bookmark_id"]) do
-            {:ok, b} -> b
-            _ -> nil
-          end
-
-        bm_name ->
-          case Fate.Game.Bookmark
-               |> Ash.Query.filter(name: bm_name)
-               |> Ash.read() do
-            {:ok, [b | _]} -> b
-            _ -> nil
-          end
-
-        true ->
-          nil
-      end
-
-    case bookmark do
+    case bookmark_id do
       nil ->
         {:error, %{code: -32000, message: "Bookmark not found"}, state}
 
-      b ->
-        case Fate.Game.set_status(b, %{status: :archived}) do
-          {:ok, _} ->
-            new_state = if state.bookmark_id == b.id, do: %{state | bookmark_id: nil}, else: state
-            {:ok, [%{type: "text", text: "Archived bookmark '#{b.name}' (#{b.id})"}], new_state}
+      id ->
+        case Bookmarks.archive(id) do
+          {:ok, archived} ->
+            new_state = if state.bookmark_id == id, do: %{state | bookmark_id: nil}, else: state
+            {:ok, [%{type: "text", text: "Archived bookmark '#{archived.name}' (#{id})"}], new_state}
 
           {:error, reason} ->
             {:error, %{code: -32000, message: "Failed to archive: #{inspect(reason)}"}, state}
@@ -1709,6 +1744,101 @@ defmodule Fate.McpServer do
     end
   end
 
+  def handle_call_tool("edit_event", %{"event_id" => event_id} = args, state) do
+    with {:ok, event} when event != nil <- Fate.Game.get_event(event_id) do
+      existing_detail = event.detail || %{}
+      new_detail = Map.merge(existing_detail, args["detail"] || %{})
+
+      update_attrs =
+        %{detail: new_detail}
+        |> then(fn a ->
+          if args["description"], do: Map.put(a, :description, args["description"]), else: a
+        end)
+
+      case FateWeb.ActionHelpers.update_event_and_broadcast(event, update_attrs, state.bookmark_id) do
+        {:ok, _, _} ->
+          {:ok, [%{type: "text", text: "Event #{event_id} updated"}], state}
+
+        {:error, reason} ->
+          {:error, %{code: -32000, message: "Failed: #{inspect(reason)}"}, state}
+      end
+    else
+      _ -> {:error, %{code: -32000, message: "Event not found: #{event_id}"}, state}
+    end
+  end
+
+  def handle_call_tool("resolve_shifts", %{"target_id" => target_id, "shifts" => shifts} = args, state) do
+    case Engine.append_event(state.bookmark_id, %{
+           type: :shifts_resolved,
+           actor_id: args["attacker_id"],
+           target_id: target_id,
+           exchange_id: args["exchange_id"],
+           description: "Resolve #{shifts} shifts",
+           detail: %{"shifts" => shifts}
+         }) do
+      {:ok, _, _} ->
+        {:ok, [%{type: "text", text: "Resolved #{shifts} shifts on #{target_id}"}], state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: inspect(reason)}, state}
+    end
+  end
+
+  def handle_call_tool("set_campaign", %{"name" => name}, state) do
+    case Engine.append_event(state.bookmark_id, %{
+           type: :create_campaign,
+           description: name,
+           detail: %{"campaign_name" => name}
+         }) do
+      {:ok, _, _} ->
+        {:ok, [%{type: "text", text: "Campaign set to '#{name}'"}], state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: inspect(reason)}, state}
+    end
+  end
+
+  def handle_call_tool("list_participants", _args, state) do
+    participants = Bookmarks.load_participants(state.bookmark_id)
+
+    list =
+      Enum.map(participants, fn bp ->
+        %{
+          participant_id: bp.participant_id,
+          name: bp.participant.name,
+          color: bp.participant.color,
+          role: bp.role,
+          seat_index: bp.seat_index
+        }
+      end)
+
+    {:ok, [%{type: "text", text: Jason.encode!(list, pretty: true)}], state}
+  end
+
+  def handle_call_tool("reorder_event", %{"event_id" => event_id} = args, state) do
+    after_event_id = args["after_event_id"]
+
+    case Fate.Game.Events.reorder(event_id, after_event_id, state.bookmark_id) do
+      :ok ->
+        case Engine.derive_state(state.bookmark_id) do
+          {:ok, new_state} ->
+            Phoenix.PubSub.broadcast(
+              Fate.PubSub,
+              "bookmark:#{state.bookmark_id}",
+              {:state_updated, new_state}
+            )
+
+          _ ->
+            :ok
+        end
+
+        {:ok, [%{type: "text", text: "Event reordered"}], state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: "Failed: #{inspect(reason)}"}, state}
+    end
+  end
+
   def handle_call_tool(tool_name, _args, state) do
     {:error, %{code: -32601, message: "Unknown tool: #{tool_name}"}, state}
   end
@@ -1892,5 +2022,35 @@ defmodule Fate.McpServer do
     Enum.reduce(keys, base_map, fn key, acc ->
       if Map.has_key?(source_map, key), do: Map.put(acc, key, source_map[key]), else: acc
     end)
+  end
+
+  defp resolve_bookmark(args) do
+    bm_name = args["bookmark_name"]
+
+    cond do
+      args["bookmark_id"] ->
+        case Fate.Game.get_bookmark(args["bookmark_id"]) do
+          {:ok, b} -> b
+          _ -> nil
+        end
+
+      bm_name ->
+        case Fate.Game.Bookmark
+             |> Ash.Query.filter(name: bm_name)
+             |> Ash.read() do
+          {:ok, [b | _]} -> b
+          _ -> nil
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp resolve_bookmark_id(args) do
+    case resolve_bookmark(args) do
+      nil -> nil
+      b -> b.id
+    end
   end
 end

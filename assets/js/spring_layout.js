@@ -41,7 +41,7 @@ export const SpringLayout = {
     } catch (_) {}
 
     this.el.addEventListener("dragover", (e) => {
-      if (e.dataTransfer.types.includes("entity-id")) {
+      if (e.dataTransfer.types.includes("entity-id") && e.dataTransfer.types.includes("source")) {
         e.preventDefault()
         e.dataTransfer.dropEffect = "move"
       }
@@ -49,7 +49,8 @@ export const SpringLayout = {
     this.el.addEventListener("drop", (e) => {
       if (e.target.closest(".zone-box")) return
       const entityId = e.dataTransfer.getData("entity-id")
-      if (entityId) {
+      const source = e.dataTransfer.getData("source")
+      if (entityId && source === "zone") {
         e.preventDefault()
         this.pushEvent("remove_from_zone", { entity_id: entityId })
       }
@@ -72,7 +73,7 @@ export const SpringLayout = {
     this.el.addEventListener("dblclick", (e) => this.onDoubleClick(e))
 
     registerDropTarget(this.el, {
-      accepts: (data) => !!data["entity-id"],
+      accepts: (data) => !!data["entity-id"] && data["source"] === "zone",
       onDrop: (data) => {
         this.pushEvent("remove_from_zone", { entity_id: data["entity-id"] })
       },
