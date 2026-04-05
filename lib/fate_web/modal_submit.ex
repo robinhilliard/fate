@@ -37,7 +37,7 @@ defmodule FateWeb.ModalSubmit do
     end
   end
 
-  def aspect_create_attrs(params, :table_scene) do
+  def aspect_create_attrs(params, {:table_scene, active_scene?}) do
     {target_type, target_id} = FateWeb.Helpers.parse_target_ref(params["target_ref"] || "")
     desc = String.trim(params["description"] || "")
 
@@ -49,9 +49,11 @@ defmodule FateWeb.ModalSubmit do
         :error
 
       true ->
+        type = if active_scene?, do: :active_aspect_add, else: :template_aspect_add
+
         {:ok,
          %{
-           type: :aspect_create,
+           type: type,
            target_id: target_id,
            description: "Add aspect: #{desc}",
            detail: %{
@@ -86,16 +88,39 @@ defmodule FateWeb.ModalSubmit do
     end
   end
 
-  @doc "Caller supplies `scene_id` (new UUID on table, or `params[\"scene_id\"]` / generated on panel)."
-  def scene_start_attrs(params, scene_id) when is_binary(scene_id) do
+  @doc "Create a scene template (prep). Caller supplies scene_id."
+  def template_scene_create_attrs(params, scene_id) when is_binary(scene_id) do
     %{
-      type: :scene_start,
-      description: "Start scene: #{params["name"]}",
+      type: :template_scene_create,
+      description: "Create scene: #{params["name"]}",
       detail: %{
         "scene_id" => scene_id,
         "name" => params["name"],
         "description" => params["scene_description"],
         "gm_notes" => params["gm_notes"]
+      }
+    }
+  end
+
+  @doc "Activate a scene template as the active scene (play)."
+  def active_scene_start_attrs(scene_id) when is_binary(scene_id) do
+    %{
+      type: :active_scene_start,
+      description: "Start scene",
+      detail: %{"scene_id" => scene_id}
+    }
+  end
+
+  @doc "Start a blank scene (ad-hoc): creates ephemeral template + activates."
+  def active_scene_start_blank_attrs(params) do
+    scene_id = Ash.UUID.generate()
+
+    %{
+      type: :active_scene_start,
+      description: "Start scene: #{params["name"] || "Untitled"}",
+      detail: %{
+        "scene_id" => scene_id,
+        "name" => params["name"]
       }
     }
   end
@@ -180,14 +205,24 @@ defmodule FateWeb.ModalSubmit do
     }
   end
 
-  def scene_modify_attrs(params) do
+  def template_scene_modify_attrs(params) do
     detail =
       %{"scene_id" => params["scene_id"]}
       |> put_non_empty("name", params["name"])
       |> put_non_empty("description", params["scene_description"])
       |> put_non_empty("gm_notes", params["gm_notes"])
 
-    %{type: :scene_modify, description: "Edit scene", detail: detail}
+    %{type: :template_scene_modify, description: "Edit scene template", detail: detail}
+  end
+
+  def active_scene_update_attrs(params) do
+    detail =
+      %{}
+      |> put_non_empty("name", params["name"])
+      |> put_non_empty("description", params["scene_description"])
+      |> put_non_empty("gm_notes", params["gm_notes"])
+
+    %{type: :active_scene_update, description: "Update scene", detail: detail}
   end
 
   def aspect_compel_attrs(params, target_display_name) when is_binary(target_display_name) do
@@ -285,20 +320,12 @@ defmodule FateWeb.ModalSubmit do
     [compel, earn]
   end
 
-  @doc "End or delete the current scene from the table ring (`:scene_end` event type for both)."
-  def scene_close_attrs(scene, :end) do
+  @doc "End the active scene from the table ring."
+  def active_scene_end_attrs(scene) do
     %{
-      type: :scene_end,
+      type: :active_scene_end,
       description: "End scene: #{scene.name}",
-      detail: %{"scene_id" => scene.id}
-    }
-  end
-
-  def scene_close_attrs(scene, :delete) do
-    %{
-      type: :scene_end,
-      description: "Delete scene: #{scene.name}",
-      detail: %{"scene_id" => scene.id}
+      detail: %{"scene_id" => Map.get(scene, :template_id, scene.id)}
     }
   end
 
@@ -306,12 +333,14 @@ defmodule FateWeb.ModalSubmit do
     %{type: :concede, actor_id: entity_id, description: "Concede"}
   end
 
-  def entity_remove_attrs(entity_id, name_or_nil \\ nil) do
+  def entity_remove_attrs(entity_id, name_or_nil \\ nil, kind_or_nil \\ nil) do
+    kind_str = if kind_or_nil, do: to_string(kind_or_nil), else: nil
+
     %{
       type: :entity_remove,
       target_id: entity_id,
-      description: "Remove entity",
-      detail: %{"entity_id" => entity_id, "name" => name_or_nil}
+      description: "Remove #{kind_str || "entity"}#{if name_or_nil, do: " #{name_or_nil}"}",
+      detail: %{"entity_id" => entity_id, "name" => name_or_nil, "kind" => kind_str}
     }
   end
 
@@ -366,27 +395,34 @@ defmodule FateWeb.ModalSubmit do
     }
   end
 
-  @doc "Pass the active scene struct/map (with `id` and `name`), or `nil` if none."
+  @doc "Pass the active scene struct, or `nil` if none."
   def scene_end_attrs(nil), do: :error
 
   def scene_end_attrs(scene) do
-    {:ok,
-     %{
-       type: :scene_end,
-       description: "End scene: #{scene.name}",
-       detail: %{"scene_id" => scene.id}
-     }}
+    {:ok, active_scene_end_attrs(scene)}
   end
 
-  def zone_create_attrs(active_scene_id, params) when is_binary(active_scene_id) do
+  def template_zone_create_attrs(scene_id, params) when is_binary(scene_id) do
     %{
-      type: :zone_create,
+      type: :template_zone_create,
       description: "Create zone: #{params["name"]}",
       detail: %{
-        "scene_id" => active_scene_id,
+        "scene_id" => scene_id,
         "zone_id" => Ash.UUID.generate(),
         "name" => params["name"],
         "hidden" => true
+      }
+    }
+  end
+
+  def active_zone_add_attrs(params) do
+    %{
+      type: :active_zone_add,
+      description: "Add zone: #{params["name"]}",
+      detail: %{
+        "zone_id" => Ash.UUID.generate(),
+        "name" => params["name"],
+        "hidden" => Map.get(params, "hidden", true)
       }
     }
   end

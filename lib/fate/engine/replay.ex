@@ -13,6 +13,7 @@ defmodule Fate.Engine.Replay do
     Consequence,
     PendingShifts,
     SceneState,
+    ActiveScene,
     ZoneState
   }
 
@@ -63,15 +64,45 @@ defmodule Fate.Engine.Replay do
     event.target_id != nil and not Map.has_key?(state.entities, event.target_id)
   end
 
+  # Legacy scene validation (backward compat)
   defp event_invalid?(%{type: type} = event, state)
        when type in ~w(scene_end scene_modify zone_create)a do
     scene_id = (event.detail || %{})["scene_id"]
-    scene_id != nil and not Enum.any?(state.scenes, &(&1.id == scene_id))
+    scene_id != nil and not Enum.any?(state.scene_templates, &(&1.id == scene_id))
   end
 
   defp event_invalid?(%{type: :zone_modify} = event, state) do
     zone_id = (event.detail || %{})["zone_id"]
     zone_id != nil and not zone_exists?(state, zone_id)
+  end
+
+  # Template event validation
+  defp event_invalid?(%{type: :template_scene_create}, _state), do: false
+
+  defp event_invalid?(%{type: type} = event, state)
+       when type in ~w(template_scene_modify template_zone_create template_zone_modify template_aspect_add template_entity_place)a do
+    scene_id = (event.detail || %{})["scene_id"]
+    scene_id != nil and not Enum.any?(state.scene_templates, &(&1.id == scene_id))
+  end
+
+  # Active scene validation
+  defp event_invalid?(%{type: :active_scene_start} = event, state) do
+    scene_id = (event.detail || %{})["scene_id"]
+
+    cond do
+      state.active_scene != nil -> true
+      scene_id != nil and not Enum.any?(state.scene_templates, &(&1.id == scene_id)) -> true
+      true -> false
+    end
+  end
+
+  defp event_invalid?(%{type: :active_scene_end}, state) do
+    state.active_scene == nil
+  end
+
+  defp event_invalid?(%{type: type}, state)
+       when type in ~w(active_scene_update active_zone_add active_zone_modify active_aspect_add active_aspect_modify active_aspect_remove)a do
+    state.active_scene == nil
   end
 
   defp event_invalid?(%{type: :redirect_hit} = event, state) do
@@ -93,17 +124,27 @@ defmodule Fate.Engine.Replay do
     do: id != nil and not Map.has_key?(state.entities, id)
 
   defp target_missing?(state, "scene", id),
-    do: id != nil and not Enum.any?(state.scenes, &(&1.id == id))
+    do: id != nil and not scene_or_active_exists?(state, id)
 
   defp target_missing?(state, "zone", id),
     do: id != nil and not zone_exists?(state, id)
 
   defp target_missing?(_, _, _), do: false
 
+  defp scene_or_active_exists?(state, scene_id) do
+    Enum.any?(state.scene_templates, &(&1.id == scene_id)) or
+      (state.active_scene != nil and state.active_scene.template_id == scene_id)
+  end
+
   defp zone_exists?(state, zone_id) do
-    Enum.any?(state.scenes, fn scene ->
+    template_has = Enum.any?(state.scene_templates, fn scene ->
       Enum.any?(scene.zones, &(&1.id == zone_id))
     end)
+
+    active_has = state.active_scene != nil and
+      Enum.any?(state.active_scene.zones, &(&1.id == zone_id))
+
+    template_has or active_has
   end
 
   @doc """
@@ -143,10 +184,29 @@ defmodule Fate.Engine.Replay do
       :skill_set -> apply_skill_set(event, state)
       :stunt_add -> apply_stunt_add(event, state)
       :stunt_remove -> apply_stunt_remove(event, state)
-      :scene_start -> apply_scene_start(event, state)
-      :scene_end -> apply_scene_end(event, state)
-      :zone_create -> apply_zone_create(event, state)
-      :zone_modify -> apply_zone_modify(event, state)
+      # Legacy scene types (backward compat: create+activate in one step)
+      :scene_start -> apply_legacy_scene_start(event, state)
+      :scene_end -> apply_legacy_scene_end(event, state)
+      :scene_modify -> apply_legacy_scene_modify(event, state)
+      :zone_create -> apply_legacy_zone_create(event, state)
+      :zone_modify -> apply_legacy_zone_modify(event, state)
+      # Template scene types (prep)
+      :template_scene_create -> apply_template_scene_create(event, state)
+      :template_scene_modify -> apply_template_scene_modify(event, state)
+      :template_zone_create -> apply_template_zone_create(event, state)
+      :template_zone_modify -> apply_template_zone_modify(event, state)
+      :template_aspect_add -> apply_template_aspect_add(event, state)
+      :template_entity_place -> apply_template_entity_place(event, state)
+      # Active scene types (play)
+      :active_scene_start -> apply_active_scene_start(event, state)
+      :active_scene_end -> apply_active_scene_end(event, state)
+      :active_scene_update -> apply_active_scene_update(event, state)
+      :active_zone_add -> apply_active_zone_add(event, state)
+      :active_zone_modify -> apply_active_zone_modify(event, state)
+      :active_aspect_add -> apply_active_aspect_add(event, state)
+      :active_aspect_modify -> apply_active_aspect_modify(event, state)
+      :active_aspect_remove -> apply_active_aspect_remove(event, state)
+      # Other
       :entity_enter_scene -> apply_entity_enter_scene(event, state)
       :entity_move -> apply_entity_move(event, state)
       :stress_apply -> apply_stress_apply(event, state)
@@ -160,7 +220,6 @@ defmodule Fate.Engine.Replay do
       :concede -> apply_concede(event, state)
       :taken_out -> apply_taken_out(event, state)
       :mook_eliminate -> apply_mook_eliminate(event, state)
-      :scene_modify -> apply_scene_modify(event, state)
       :redirect_hit -> apply_redirect_hit(event, state)
       :note -> state
       _ -> state
@@ -235,7 +294,14 @@ defmodule Fate.Engine.Replay do
 
   defp apply_entity_remove(event, state) do
     entity_id = event.target_id || get_in(event.detail, ["entity_id"])
-    %{state | entities: Map.delete(state.entities, entity_id)}
+
+    removed =
+      case Map.get(state.entities, entity_id) do
+        nil -> state.removed_entities
+        entity -> Map.put(state.removed_entities, entity_id, %{name: entity.name, kind: entity.kind})
+      end
+
+    %{state | entities: Map.delete(state.entities, entity_id), removed_entities: removed}
   end
 
   defp apply_aspect_create(event, state) do
@@ -259,14 +325,26 @@ defmodule Fate.Engine.Replay do
         end)
 
       "scene" ->
-        update_scene(state, target_id, fn scene ->
-          %{scene | aspects: scene.aspects ++ [aspect]}
-        end)
+        if state.active_scene && state.active_scene.template_id == target_id do
+          update_active_scene(state, fn scene ->
+            %{scene | aspects: scene.aspects ++ [aspect]}
+          end)
+        else
+          update_template(state, target_id, fn template ->
+            %{template | aspects: template.aspects ++ [aspect]}
+          end)
+        end
 
       "zone" ->
-        update_zone(state, target_id, fn zone ->
-          %{zone | aspects: zone.aspects ++ [aspect]}
-        end)
+        if state.active_scene && Enum.any?(state.active_scene.zones, &(&1.id == target_id)) do
+          update_active_zone(state, target_id, fn zone ->
+            %{zone | aspects: zone.aspects ++ [aspect]}
+          end)
+        else
+          update_template_zone(state, target_id, fn zone ->
+            %{zone | aspects: zone.aspects ++ [aspect]}
+          end)
+        end
 
       _ ->
         state
@@ -289,14 +367,26 @@ defmodule Fate.Engine.Replay do
           end)
 
         "scene" ->
-          update_scene(state, target_id, fn scene ->
-            %{scene | aspects: Enum.map(scene.aspects, update_fn)}
-          end)
+          if state.active_scene && state.active_scene.template_id == target_id do
+            update_active_scene(state, fn scene ->
+              %{scene | aspects: Enum.map(scene.aspects, update_fn)}
+            end)
+          else
+            update_template(state, target_id, fn template ->
+              %{template | aspects: Enum.map(template.aspects, update_fn)}
+            end)
+          end
 
         "zone" ->
-          update_zone(state, target_id, fn zone ->
-            %{zone | aspects: Enum.map(zone.aspects, update_fn)}
-          end)
+          if state.active_scene && Enum.any?(state.active_scene.zones, &(&1.id == target_id)) do
+            update_active_zone(state, target_id, fn zone ->
+              %{zone | aspects: Enum.map(zone.aspects, update_fn)}
+            end)
+          else
+            update_template_zone(state, target_id, fn zone ->
+              %{zone | aspects: Enum.map(zone.aspects, update_fn)}
+            end)
+          end
 
         _ ->
           apply_aspect_modify_legacy(state, aspect_id, update_fn)
@@ -324,13 +414,27 @@ defmodule Fate.Engine.Replay do
     |> update_all_entities(fn entity ->
       %{entity | aspects: Enum.map(entity.aspects, update_fn)}
     end)
-    |> update_all_scenes(fn scene ->
+    |> update_all_templates(fn template ->
       zones =
-        Enum.map(scene.zones, fn zone ->
+        Enum.map(template.zones, fn zone ->
           %{zone | aspects: Enum.map(zone.aspects, update_fn)}
         end)
 
-      %{scene | aspects: Enum.map(scene.aspects, update_fn), zones: zones}
+      %{template | aspects: Enum.map(template.aspects, update_fn), zones: zones}
+    end)
+    |> then(fn s ->
+      if s.active_scene do
+        update_active_scene(s, fn scene ->
+          zones =
+            Enum.map(scene.zones, fn zone ->
+              %{zone | aspects: Enum.map(zone.aspects, update_fn)}
+            end)
+
+          %{scene | aspects: Enum.map(scene.aspects, update_fn), zones: zones}
+        end)
+      else
+        s
+      end
     end)
   end
 
@@ -348,14 +452,26 @@ defmodule Fate.Engine.Replay do
           end)
 
         "scene" ->
-          update_scene(state, target_id, fn scene ->
-            %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
-          end)
+          if state.active_scene && state.active_scene.template_id == target_id do
+            update_active_scene(state, fn scene ->
+              %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
+            end)
+          else
+            update_template(state, target_id, fn template ->
+              %{template | aspects: Enum.reject(template.aspects, &(&1.id == aspect_id))}
+            end)
+          end
 
         "zone" ->
-          update_zone(state, target_id, fn zone ->
-            %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
-          end)
+          if state.active_scene && Enum.any?(state.active_scene.zones, &(&1.id == target_id)) do
+            update_active_zone(state, target_id, fn zone ->
+              %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
+            end)
+          else
+            update_template_zone(state, target_id, fn zone ->
+              %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
+            end)
+          end
 
         _ ->
           apply_aspect_remove_legacy(state, aspect_id)
@@ -370,8 +486,17 @@ defmodule Fate.Engine.Replay do
     |> update_all_entities(fn entity ->
       %{entity | aspects: Enum.reject(entity.aspects, &(&1.id == aspect_id))}
     end)
-    |> update_all_scenes(fn scene ->
-      %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
+    |> update_all_templates(fn template ->
+      %{template | aspects: Enum.reject(template.aspects, &(&1.id == aspect_id))}
+    end)
+    |> then(fn s ->
+      if s.active_scene do
+        update_active_scene(s, fn scene ->
+          %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
+        end)
+      else
+        s
+      end
     end)
   end
 
@@ -415,36 +540,374 @@ defmodule Fate.Engine.Replay do
     end)
   end
 
-  defp apply_scene_start(event, state) do
-    detail = event.detail || %{}
+  # --- Legacy scene handlers (backward compat: create+activate in one step) ---
 
-    scene = %SceneState{
-      id: detail["scene_id"] || deterministic_id("scene", event.id || ""),
+  defp apply_legacy_scene_start(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"] || deterministic_id("scene", event.id || "")
+
+    template = %SceneState{
+      id: scene_id,
       name: detail["name"] || "No Scene",
       description: detail["description"],
       gm_notes: detail["gm_notes"],
-      status: :active,
       zones: build_zones(detail["zones"] || []),
       aspects: build_aspects(detail["aspects"] || [])
     }
 
-    pc_count = state.entities |> Map.values() |> Enum.count(&(&1.kind == :pc))
-
-    %{state | scenes: state.scenes ++ [scene], gm_fate_points: pc_count}
+    state = %{state | scene_templates: state.scene_templates ++ [template]}
+    activate_template(state, template)
   end
 
-  defp apply_scene_end(event, state) do
+  defp apply_legacy_scene_end(event, state) do
     detail = event.detail || %{}
     scene_id = detail["scene_id"]
 
-    scene = Enum.find(state.scenes, &(&1.id == scene_id))
-    zone_ids = if scene, do: Enum.map(scene.zones, & &1.id), else: []
+    if state.active_scene != nil and state.active_scene.template_id == scene_id do
+      deactivate_scene(state)
+    else
+      state
+    end
+  end
+
+  defp apply_legacy_scene_modify(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+
+    if state.active_scene != nil and state.active_scene.template_id == scene_id do
+      update_active_scene(state, fn scene ->
+        scene
+        |> maybe_put(:name, detail["name"])
+        |> maybe_put(:description, detail["description"])
+        |> maybe_put(:gm_notes, detail["gm_notes"])
+      end)
+    else
+      update_template(state, scene_id, fn template ->
+        template
+        |> maybe_put(:name, detail["name"])
+        |> maybe_put(:description, detail["description"])
+        |> maybe_put(:gm_notes, detail["gm_notes"])
+      end)
+    end
+  end
+
+  defp apply_legacy_zone_create(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+
+    zone = %ZoneState{
+      id: detail["zone_id"] || deterministic_id("zone", event.id || ""),
+      name: detail["name"] || "Zone",
+      sort_order: detail["sort_order"] || 0,
+      aspects: build_aspects(detail["aspects"] || []),
+      hidden: detail["hidden"] || false
+    }
+
+    if state.active_scene != nil and state.active_scene.template_id == scene_id do
+      update_active_scene(state, fn scene ->
+        %{scene | zones: scene.zones ++ [zone]}
+      end)
+    else
+      update_template(state, scene_id, fn template ->
+        %{template | zones: template.zones ++ [zone]}
+      end)
+    end
+  end
+
+  defp apply_legacy_zone_modify(event, state) do
+    detail = event.detail || %{}
+    zone_id = detail["zone_id"]
+
+    modify_fn = fn zone ->
+      zone
+      |> maybe_put(:name, detail["name"])
+      |> maybe_put(:hidden, detail["hidden"])
+    end
+
+    if state.active_scene != nil and
+         Enum.any?(state.active_scene.zones, &(&1.id == zone_id)) do
+      update_active_zone(state, zone_id, modify_fn)
+    else
+      update_template_zone(state, zone_id, modify_fn)
+    end
+  end
+
+  # --- Template scene handlers (prep) ---
+
+  defp apply_template_scene_create(event, state) do
+    detail = event.detail || %{}
+
+    template = %SceneState{
+      id: detail["scene_id"] || deterministic_id("scene", event.id || ""),
+      name: detail["name"] || "Untitled Scene",
+      description: detail["description"],
+      gm_notes: detail["gm_notes"],
+      zones: build_zones(detail["zones"] || []),
+      aspects: build_aspects(detail["aspects"] || [])
+    }
+
+    %{state | scene_templates: state.scene_templates ++ [template]}
+  end
+
+  defp apply_template_scene_modify(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+
+    update_template(state, scene_id, fn template ->
+      template
+      |> maybe_put(:name, detail["name"])
+      |> maybe_put(:description, detail["description"])
+      |> maybe_put(:gm_notes, detail["gm_notes"])
+    end)
+  end
+
+  defp apply_template_zone_create(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+
+    zone = %ZoneState{
+      id: detail["zone_id"] || deterministic_id("zone", event.id || ""),
+      name: detail["name"] || "Zone",
+      sort_order: detail["sort_order"] || 0,
+      aspects: build_aspects(detail["aspects"] || []),
+      hidden: detail["hidden"] || false
+    }
+
+    update_template(state, scene_id, fn template ->
+      %{template | zones: template.zones ++ [zone]}
+    end)
+  end
+
+  defp apply_template_zone_modify(event, state) do
+    detail = event.detail || %{}
+    zone_id = detail["zone_id"]
+
+    update_template_zone(state, zone_id, fn zone ->
+      zone
+      |> maybe_put(:name, detail["name"])
+      |> maybe_put(:hidden, detail["hidden"])
+    end)
+  end
+
+  defp apply_template_aspect_add(event, state) do
+    detail = event.detail || %{}
+    target_type = detail["target_type"] || "scene"
+    target_id = detail["target_id"]
+
+    aspect = %Aspect{
+      id: detail["aspect_id"] || deterministic_id("aspect", event.id || ""),
+      description: detail["description"] || "",
+      role: parse_atom(detail["role"], :situation),
+      created_by_entity_id: event.actor_id,
+      free_invokes: detail["free_invokes"] || 0,
+      hidden: detail["hidden"] || false
+    }
+
+    case target_type do
+      "scene" ->
+        update_template(state, target_id, fn template ->
+          %{template | aspects: template.aspects ++ [aspect]}
+        end)
+
+      "zone" ->
+        update_template_zone(state, target_id, fn zone ->
+          %{zone | aspects: zone.aspects ++ [aspect]}
+        end)
+
+      _ ->
+        state
+    end
+  end
+
+  defp apply_template_entity_place(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+    entity_id = detail["entity_id"]
+    zone_id = detail["zone_id"]
+
+    update_template(state, scene_id, fn template ->
+      placements =
+        if zone_id do
+          Map.put(template.entity_placements, entity_id, zone_id)
+        else
+          Map.delete(template.entity_placements, entity_id)
+        end
+
+      %{template | entity_placements: placements}
+    end)
+  end
+
+  # --- Active scene handlers (play) ---
+
+  defp apply_active_scene_start(event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+
+    case Enum.find(state.scene_templates, &(&1.id == scene_id)) do
+      nil ->
+        template = %SceneState{
+          id: scene_id || deterministic_id("scene", event.id || ""),
+          name: detail["name"] || "Untitled Scene",
+          description: detail["description"],
+          gm_notes: detail["gm_notes"]
+        }
+
+        state = %{state | scene_templates: state.scene_templates ++ [template]}
+        activate_template(state, template)
+
+      template ->
+        activate_template(state, template)
+    end
+  end
+
+  defp apply_active_scene_end(_event, state) do
+    if state.active_scene != nil do
+      deactivate_scene(state)
+    else
+      state
+    end
+  end
+
+  defp apply_active_scene_update(event, state) do
+    detail = event.detail || %{}
+
+    update_active_scene(state, fn scene ->
+      scene
+      |> maybe_put(:name, detail["name"])
+      |> maybe_put(:description, detail["description"])
+      |> maybe_put(:gm_notes, detail["gm_notes"])
+    end)
+  end
+
+  defp apply_active_zone_add(event, state) do
+    detail = event.detail || %{}
+
+    zone = %ZoneState{
+      id: detail["zone_id"] || deterministic_id("zone", event.id || ""),
+      name: detail["name"] || "Zone",
+      sort_order: detail["sort_order"] || 0,
+      aspects: build_aspects(detail["aspects"] || []),
+      hidden: detail["hidden"] || false
+    }
+
+    update_active_scene(state, fn scene ->
+      %{scene | zones: scene.zones ++ [zone]}
+    end)
+  end
+
+  defp apply_active_zone_modify(event, state) do
+    detail = event.detail || %{}
+    zone_id = detail["zone_id"]
+
+    update_active_zone(state, zone_id, fn zone ->
+      zone
+      |> maybe_put(:name, detail["name"])
+      |> maybe_put(:hidden, detail["hidden"])
+    end)
+  end
+
+  defp apply_active_aspect_add(event, state) do
+    detail = event.detail || %{}
+    target_type = detail["target_type"] || "scene"
+    target_id = detail["target_id"]
+
+    aspect = %Aspect{
+      id: detail["aspect_id"] || deterministic_id("aspect", event.id || ""),
+      description: detail["description"] || "",
+      role: parse_atom(detail["role"], :situation),
+      created_by_entity_id: event.actor_id,
+      free_invokes: detail["free_invokes"] || 0,
+      hidden: detail["hidden"] || false
+    }
+
+    case target_type do
+      "scene" ->
+        update_active_scene(state, fn scene ->
+          %{scene | aspects: scene.aspects ++ [aspect]}
+        end)
+
+      "zone" ->
+        update_active_zone(state, target_id, fn zone ->
+          %{zone | aspects: zone.aspects ++ [aspect]}
+        end)
+
+      _ ->
+        state
+    end
+  end
+
+  defp apply_active_aspect_modify(event, state) do
+    detail = event.detail || %{}
+    aspect_id = detail["aspect_id"]
+    update_fn = aspect_modify_fn(aspect_id, detail)
+
+    case detail["target_type"] do
+      "zone" ->
+        zone_id = detail["target_id"]
+
+        update_active_zone(state, zone_id, fn zone ->
+          %{zone | aspects: Enum.map(zone.aspects, update_fn)}
+        end)
+
+      _ ->
+        update_active_scene(state, fn scene ->
+          %{scene | aspects: Enum.map(scene.aspects, update_fn)}
+        end)
+    end
+  end
+
+  defp apply_active_aspect_remove(event, state) do
+    detail = event.detail || %{}
+    aspect_id = detail["aspect_id"]
+
+    case detail["target_type"] do
+      "zone" ->
+        zone_id = detail["target_id"]
+
+        update_active_zone(state, zone_id, fn zone ->
+          %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
+        end)
+
+      _ ->
+        update_active_scene(state, fn scene ->
+          %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
+        end)
+    end
+  end
+
+  # --- Scene activation/deactivation helpers ---
+
+  defp activate_template(state, template) do
+    active = %ActiveScene{
+      id: Ash.UUID.generate(),
+      template_id: template.id,
+      name: template.name,
+      description: template.description,
+      gm_notes: template.gm_notes,
+      zones: Enum.map(template.zones, fn z -> %{z | hidden: true} end),
+      aspects: Enum.map(template.aspects, fn a -> %{a | hidden: true} end),
+      entity_placements: template.entity_placements
+    }
+
+    pc_count = state.entities |> Map.values() |> Enum.count(&(&1.kind == :pc))
+
+    state = Enum.reduce(template.entity_placements, state, fn {entity_id, zone_id}, acc ->
+      update_entity(acc, entity_id, fn entity ->
+        %{entity | zone_id: zone_id, hidden: true}
+      end)
+    end)
+
+    %{state | active_scene: active, gm_fate_points: pc_count}
+  end
+
+  defp deactivate_scene(state) do
+    zone_ids = Enum.map(state.active_scene.zones, & &1.id)
 
     state
-    |> update_scene(scene_id, fn scene -> %{scene | status: :resolved} end)
     |> clear_all_stress()
     |> remove_boosts()
     |> clear_zone_ids(zone_ids)
+    |> Map.put(:active_scene, nil)
   end
 
   defp clear_zone_ids(state, zone_ids) do
@@ -454,33 +917,6 @@ defmodule Fate.Engine.Replay do
       else
         entity
       end
-    end)
-  end
-
-  defp apply_zone_create(event, state) do
-    detail = event.detail || %{}
-    scene_id = detail["scene_id"]
-
-    zone = %ZoneState{
-      id: detail["zone_id"] || deterministic_id("zone", event.id || ""),
-      name: detail["name"] || "Zone",
-      sort_order: detail["sort_order"] || 0,
-      aspects: build_aspects(detail["aspects"] || [])
-    }
-
-    update_scene(state, scene_id, fn scene ->
-      %{scene | zones: scene.zones ++ [zone]}
-    end)
-  end
-
-  defp apply_zone_modify(event, state) do
-    detail = event.detail || %{}
-    zone_id = detail["zone_id"]
-
-    update_zone(state, zone_id, fn zone ->
-      zone
-      |> maybe_put(:name, detail["name"])
-      |> maybe_put(:hidden, detail["hidden"])
     end)
   end
 
@@ -643,18 +1079,6 @@ defmodule Fate.Engine.Replay do
     end)
   end
 
-  defp apply_scene_modify(event, state) do
-    detail = event.detail || %{}
-    scene_id = detail["scene_id"]
-
-    update_scene(state, scene_id, fn scene ->
-      scene
-      |> maybe_put(:name, detail["name"])
-      |> maybe_put(:description, detail["description"])
-      |> maybe_put(:gm_notes, detail["gm_notes"])
-    end)
-  end
-
   defp apply_redirect_hit(event, state) do
     detail = event.detail || %{}
     from_id = event.actor_id || detail["from_entity_id"]
@@ -687,33 +1111,52 @@ defmodule Fate.Engine.Replay do
     %{state | entities: entities}
   end
 
-  defp update_scene(state, nil, _fun), do: state
+  defp update_template(state, nil, _fun), do: state
 
-  defp update_scene(state, scene_id, fun) do
-    scenes =
-      Enum.map(state.scenes, fn scene ->
-        if scene.id == scene_id, do: fun.(scene), else: scene
+  defp update_template(state, scene_id, fun) do
+    templates =
+      Enum.map(state.scene_templates, fn template ->
+        if template.id == scene_id, do: fun.(template), else: template
       end)
 
-    %{state | scenes: scenes}
+    %{state | scene_templates: templates}
   end
 
-  defp update_all_scenes(state, fun) do
-    %{state | scenes: Enum.map(state.scenes, fun)}
+  defp update_all_templates(state, fun) do
+    %{state | scene_templates: Enum.map(state.scene_templates, fun)}
   end
 
-  defp update_zone(state, zone_id, fun) do
-    scenes =
-      Enum.map(state.scenes, fn scene ->
+  defp update_active_scene(state, fun) do
+    if state.active_scene do
+      %{state | active_scene: fun.(state.active_scene)}
+    else
+      state
+    end
+  end
+
+  defp update_template_zone(state, zone_id, fun) do
+    templates =
+      Enum.map(state.scene_templates, fn template ->
         zones =
-          Enum.map(scene.zones, fn zone ->
+          Enum.map(template.zones, fn zone ->
             if zone.id == zone_id, do: fun.(zone), else: zone
           end)
 
-        %{scene | zones: zones}
+        %{template | zones: zones}
       end)
 
-    %{state | scenes: scenes}
+    %{state | scene_templates: templates}
+  end
+
+  defp update_active_zone(state, zone_id, fun) do
+    update_active_scene(state, fn scene ->
+      zones =
+        Enum.map(scene.zones, fn zone ->
+          if zone.id == zone_id, do: fun.(zone), else: zone
+        end)
+
+      %{scene | zones: zones}
+    end)
   end
 
   defp clear_all_stress(state) do
@@ -724,12 +1167,17 @@ defmodule Fate.Engine.Replay do
   end
 
   defp remove_boosts(state) do
-    update_all_entities(state, fn entity ->
+    state = update_all_entities(state, fn entity ->
       %{entity | aspects: Enum.reject(entity.aspects, &(&1.role == :boost))}
     end)
-    |> update_all_scenes(fn scene ->
-      %{scene | aspects: Enum.reject(scene.aspects, &(&1.role == :boost))}
-    end)
+
+    if state.active_scene do
+      update_active_scene(state, fn scene ->
+        %{scene | aspects: Enum.reject(scene.aspects, &(&1.role == :boost))}
+      end)
+    else
+      state
+    end
   end
 
   defp build_aspects(aspect_list) do
@@ -845,21 +1293,31 @@ defmodule Fate.Engine.Replay do
     if entity_hit do
       entity_hit
     else
-      Enum.find_value(state.scenes, fn scene ->
-        cond do
-          Enum.any?(scene.aspects, &(&1.id == aspect_id)) ->
-            {:ok, "scene", scene.id}
-
-          true ->
-            Enum.find_value(scene.zones, fn zone ->
-              if Enum.any?(zone.aspects, &(&1.id == aspect_id)), do: {:ok, "zone", zone.id}
-            end)
+      active_hit =
+        if state.active_scene do
+          find_aspect_in_scene(state.active_scene, aspect_id)
         end
-      end) || :error
+
+      active_hit ||
+        Enum.find_value(state.scene_templates, fn template ->
+          find_aspect_in_scene(template, aspect_id)
+        end) || :error
     end
   end
 
   def find_aspect_container(_, _), do: :error
+
+  defp find_aspect_in_scene(scene, aspect_id) do
+    cond do
+      Enum.any?(scene.aspects, &(&1.id == aspect_id)) ->
+        {:ok, "scene", Map.get(scene, :template_id, scene.id)}
+
+      true ->
+        Enum.find_value(scene.zones, fn zone ->
+          if Enum.any?(zone.aspects, &(&1.id == aspect_id)), do: {:ok, "zone", zone.id}
+        end)
+    end
+  end
 
   @doc """
   Entity ids (strings) referenced by an event, for filtering the event log by selected table entities.

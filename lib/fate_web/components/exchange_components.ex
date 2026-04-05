@@ -308,24 +308,26 @@ defmodule FateWeb.ExchangeComponents do
           end)
 
         scene_aspects =
-          state.scenes
-          |> Enum.filter(&(&1.status == :active))
-          |> Enum.flat_map(fn s ->
-            Enum.map(
-              s.aspects,
-              &%{id: &1.id, label: "Scene: #{&1.description}", free_invokes: &1.free_invokes}
-            ) ++
-              Enum.flat_map(s.zones, fn z ->
-                Enum.map(
-                  z.aspects,
-                  &%{
-                    id: &1.id,
-                    label: "#{z.name}: #{&1.description}",
-                    free_invokes: &1.free_invokes
-                  }
-                )
-              end)
-          end)
+          case state.active_scene do
+            nil ->
+              []
+
+            s ->
+              Enum.map(
+                s.aspects,
+                &%{id: &1.id, label: "Scene: #{&1.description}", free_invokes: &1.free_invokes}
+              ) ++
+                Enum.flat_map(s.zones, fn z ->
+                  Enum.map(
+                    z.aspects,
+                    &%{
+                      id: &1.id,
+                      label: "#{z.name}: #{&1.description}",
+                      free_invokes: &1.free_invokes
+                    }
+                  )
+                end)
+          end
 
         entity_aspects ++ scene_aspects
       else

@@ -710,46 +710,47 @@ defmodule FateWeb.TableComponents do
   end
 
   def gm_notes_ring(assigns) do
-    active_scene = Enum.find(assigns.state.scenes, &(&1.id == assigns.current_scene_id))
-    active_scenes = Enum.filter(assigns.state.scenes, &(&1.status == :active))
+    active_scene = assigns.state.active_scene
+    scene_templates = assigns.state.scene_templates
 
     assigns =
-      assigns |> assign(:active_scene, active_scene) |> assign(:active_scenes, active_scenes)
+      assigns |> assign(:active_scene, active_scene) |> assign(:scene_templates, scene_templates)
 
     ~H"""
     <div class="context-ring" id="ring-gm-notes">
-      <%!-- Prep: add / delete scenes --%>
+      <%!-- Always available: create new template --%>
       <button
         class="ring-item"
         phx-click="ring_action"
         phx-value-action="new_scene"
-        data-tooltip="Add Scene"
+        data-tooltip="New Scene"
       >
         <.icon name="hero-document-plus" class="w-3.5 h-3.5" />
       </button>
-      <%= if @active_scene do %>
-        <button
-          class="ring-item ring-item-danger"
-          phx-click="ring_action"
-          phx-value-action="delete_scene"
-          data-tooltip="Delete Scene"
-          data-confirm="Delete this scene?"
-        >
-          <.icon name="hero-trash" class="w-3.5 h-3.5" />
-        </button>
-      <% end %>
 
-      <%!-- Play: start / stop scenes --%>
-      <%= if length(@active_scenes) > 1 do %>
+      <%!-- Prep mode only --%>
+      <%= unless @active_scene do %>
+        <%= if length(@scene_templates) > 1 do %>
+          <button
+            class="ring-item"
+            phx-click="ring_action"
+            phx-value-action="switch_scene_list"
+            data-tooltip="Switch Scene"
+          >
+            <.icon name="hero-arrows-right-left" class="w-3.5 h-3.5" />
+          </button>
+        <% end %>
         <button
           class="ring-item"
           phx-click="ring_action"
-          phx-value-action="switch_scene_list"
-          data-tooltip="Switch Scene"
+          phx-value-action="start_scene"
+          data-tooltip="Start Scene"
         >
-          <.icon name="hero-arrows-right-left" class="w-3.5 h-3.5" />
+          <.icon name="hero-play" class="w-3.5 h-3.5" />
         </button>
       <% end %>
+
+      <%!-- Live mode only --%>
       <%= if @active_scene do %>
         <button
           class="ring-item ring-item-danger"
@@ -791,10 +792,10 @@ defmodule FateWeb.TableComponents do
 
     ~H"""
     <.modal_frame variant={:table} inner_click_away={true}>
-      <:title>Start Scene</:title>
+      <:title>New Scene</:title>
       <form phx-submit="submit_table_modal" class="space-y-3">
         <.scene_start_fields mention_catalog_json={@mention_catalog_json} />
-        <.modal_frame_actions primary_label="Start" close_event="close_table_modal" />
+        <.modal_frame_actions primary_label="Create" close_event="close_table_modal" />
       </form>
     </.modal_frame>
     """
@@ -824,30 +825,44 @@ defmodule FateWeb.TableComponents do
   end
 
   def table_modal(%{modal: "switch_scene"} = assigns) do
-    active_scenes =
-      if assigns[:state], do: Enum.filter(assigns.state.scenes, &(&1.status == :active)), else: []
+    scene_templates =
+      if assigns[:state], do: assigns.state.scene_templates, else: []
 
-    assigns = assign(assigns, :active_scenes, active_scenes)
+    assigns = assign(assigns, :scene_templates, scene_templates)
 
     ~H"""
     <.modal_frame variant={:table} inner_click_away={true}>
       <:title>Switch Scene</:title>
       <div class="space-y-2">
-        <%= for scene <- @active_scenes do %>
+        <button
+          phx-click="ring_action"
+          phx-value-action="new_scene"
+          class="w-full text-left px-3 py-2 bg-green-900/30 border border-green-700/20 rounded-lg hover:bg-green-800/40 transition flex items-center gap-2"
+        >
+          <.icon name="hero-plus" class="w-4 h-4 text-green-400" />
+          <span class="text-sm text-green-200 font-bold">New Scene</span>
+        </button>
+        <%= for template <- @scene_templates do %>
           <button
             phx-click="ring_action"
             phx-value-action="switch_scene"
-            phx-value-scene-id={scene.id}
-            class="w-full text-left px-3 py-2 bg-amber-900/30 border border-amber-700/20 rounded-lg hover:bg-amber-800/40 transition"
+            phx-value-template-id={template.id}
+            class={[
+              "w-full text-left px-3 py-2 border rounded-lg hover:bg-amber-800/40 transition",
+              if(template.id == @current_template_id,
+                do: "bg-amber-800/50 border-amber-600/40",
+                else: "bg-amber-900/30 border-amber-700/20"
+              )
+            ]}
           >
             <div
               class="text-sm text-amber-100 font-bold"
               style="font-family: 'Patrick Hand', cursive;"
             >
-              {scene.name || "(null scene)"}
+              {template.name || "(untitled)"}
             </div>
-            <%= if scene.description do %>
-              <div class="text-xs text-amber-200/40">{scene.description}</div>
+            <%= if template.description do %>
+              <div class="text-xs text-amber-200/40">{template.description}</div>
             <% end %>
           </button>
         <% end %>
@@ -880,15 +895,21 @@ defmodule FateWeb.TableComponents do
   end
 
   def table_modal(%{modal: "scene_aspect_create"} = assigns) do
-    active_scene =
-      if assigns[:state] && assigns[:current_scene_id],
-        do: Enum.find(assigns.state.scenes, &(&1.id == assigns.current_scene_id)),
-        else: nil
+    active_scene = if assigns[:state], do: assigns.state.active_scene, else: nil
+
+    scene =
+      if active_scene do
+        active_scene
+      else
+        if assigns[:state] && assigns[:current_template_id],
+          do: Enum.find(assigns.state.scene_templates, &(&1.id == assigns.current_template_id)),
+          else: nil
+      end
 
     target_options =
-      if active_scene do
-        [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
-          Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
+      if scene do
+        [{"scene:#{scene.id}", "Scene: #{scene.name}"}] ++
+          Enum.map(scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
       else
         []
       end
@@ -1381,20 +1402,26 @@ defmodule FateWeb.TableComponents do
 
   defp table_modal_note(assigns, preselect_entity_id) do
     state = assigns[:state]
-    current_scene_id = assigns[:current_scene_id]
+    active_scene = if state, do: state.active_scene, else: nil
 
-    active_scene =
-      if state && current_scene_id,
-        do: Enum.find(state.scenes, &(&1.id == current_scene_id)),
-        else: nil
+    scene =
+      if active_scene do
+        active_scene
+      else
+        current_template_id = assigns[:current_template_id]
+
+        if state && current_template_id,
+          do: Enum.find(state.scene_templates, &(&1.id == current_template_id)),
+          else: nil
+      end
 
     target_options =
       if state do
         scene_opts =
-          if active_scene,
+          if scene,
             do:
-              [{"scene:#{active_scene.id}", "Scene: #{active_scene.name}"}] ++
-                Enum.map(active_scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end),
+              [{"scene:#{scene.id}", "Scene: #{scene.name}"}] ++
+                Enum.map(scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end),
             else: []
 
         entity_opts =

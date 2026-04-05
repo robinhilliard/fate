@@ -56,7 +56,14 @@ defmodule Fate.Engine.State do
   end
 
   defmodule SceneState do
-    defstruct [:id, :name, :description, :gm_notes, status: :active, zones: [], aspects: []]
+    @moduledoc "Scene template — prep object with zones, aspects, and entity placements."
+    defstruct [:id, :name, :description, :gm_notes, zones: [], aspects: [], entity_placements: %{}]
+  end
+
+  defmodule ActiveScene do
+    @moduledoc "Active scene instance — independent copy of a template on the table during play."
+    defstruct [:id, :template_id, :name, :description, :gm_notes,
+      zones: [], aspects: [], entity_placements: %{}]
   end
 
   defmodule ZoneState do
@@ -74,7 +81,9 @@ defmodule Fate.Engine.State do
       skill_list: @core_skills,
       gm_fate_points: 0,
       entities: %{},
-      scenes: []
+      removed_entities: %{},
+      scene_templates: [],
+      active_scene: nil
     ]
   end
 end

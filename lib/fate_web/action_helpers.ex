@@ -225,7 +225,7 @@ defmodule FateWeb.ActionHelpers do
 
     scene =
       if state && scene_id != "" do
-        Enum.find(state.scenes, &(&1.id == scene_id))
+        find_scene(state, scene_id)
       end
 
     name =
@@ -461,15 +461,14 @@ defmodule FateWeb.ActionHelpers do
         end
 
       "scene" ->
-        Enum.find(state.scenes, &(&1.id == target_id))
+        find_scene(state, target_id)
         |> case do
           nil -> nil
           s -> Enum.find(s.aspects, &(&1.id == aid))
         end
 
       "zone" ->
-        state.scenes
-        |> Enum.flat_map(& &1.zones)
+        all_zones(state)
         |> Enum.find(&(&1.id == target_id))
         |> case do
           nil -> nil
@@ -766,6 +765,25 @@ defmodule FateWeb.ActionHelpers do
     n = new_int || 0
     b = base_int || 0
     if n != b, do: Map.put(map, key, n), else: map
+  end
+
+  defp all_scenes(state) do
+    active = if state.active_scene, do: [state.active_scene], else: []
+    (state.scene_templates || []) ++ active
+  end
+
+  defp all_zones(state) do
+    all_scenes(state) |> Enum.flat_map(& &1.zones)
+  end
+
+  defp find_scene(state, id) do
+    a = state.active_scene
+
+    if a && (a.id == id || Map.get(a, :template_id) == id) do
+      a
+    else
+      Enum.find(state.scene_templates, &(&1.id == id))
+    end
   end
 
   defp put_if_kind_changed(map, param_kind, base_kind) do

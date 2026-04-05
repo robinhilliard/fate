@@ -13,7 +13,7 @@ defmodule Fate.Engine.ReplayTest do
       assert state.bookmark_id == "bm-1"
       assert state.head_event_id == nil
       assert state.entities == %{}
-      assert state.scenes == []
+      assert state.scene_templates == []
       assert state.system == "core"
     end
 
@@ -120,9 +120,8 @@ defmodule Fate.Engine.ReplayTest do
         aspect_create(scene_id, "Flickering Torchlight", target_type: "scene")
 
       state = Replay.derive("bm-1", [scene, add_aspect])
-      scene_state = hd(state.scenes)
-      assert length(scene_state.aspects) == 1
-      assert hd(scene_state.aspects).description == "Flickering Torchlight"
+      assert length(state.active_scene.aspects) == 1
+      assert hd(state.active_scene.aspects).description == "Flickering Torchlight"
     end
 
     test "aspect_create on zone adds aspect to zone" do
@@ -131,7 +130,7 @@ defmodule Fate.Engine.ReplayTest do
       {_aspect_id, add_aspect} = aspect_create(zone_id, "Dark Shadows", target_type: "zone")
 
       state = Replay.derive("bm-1", [scene, zone, add_aspect])
-      zone_state = hd(hd(state.scenes).zones)
+      zone_state = hd(state.active_scene.zones)
       assert length(zone_state.aspects) == 1
       assert hd(zone_state.aspects).description == "Dark Shadows"
     end
@@ -163,7 +162,7 @@ defmodule Fate.Engine.ReplayTest do
       state = Replay.derive("bm-1", [create, scene, add_ent, add_scene, modify_entity])
 
       assert hd(state.entities[entity_id].aspects).hidden == true
-      refute hd(hd(state.scenes).aspects).hidden
+      refute hd(state.active_scene.aspects).hidden
     end
 
     test "aspect_remove with target_type only touches that container" do
@@ -226,9 +225,11 @@ defmodule Fate.Engine.ReplayTest do
       {scene_id, scene} = scene_start("Battle")
 
       state = Replay.derive("bm-1", [pc1, pc2, npc, scene])
-      assert length(state.scenes) == 1
-      assert hd(state.scenes).id == scene_id
-      assert hd(state.scenes).name == "Battle"
+      assert length(state.scene_templates) == 1
+      assert hd(state.scene_templates).id == scene_id
+      assert hd(state.scene_templates).name == "Battle"
+      assert state.active_scene != nil
+      assert state.active_scene.template_id == scene_id
       assert state.gm_fate_points == 2
     end
 
@@ -260,7 +261,8 @@ defmodule Fate.Engine.ReplayTest do
 
       assert hd(entity.stress_tracks).checked == []
       refute Enum.any?(entity.aspects, &(&1.role == :boost))
-      assert hd(state.scenes).status == :resolved
+      assert state.active_scene == nil
+      assert length(state.scene_templates) == 1
     end
 
     test "zone_create adds zone to active scene" do
@@ -268,9 +270,9 @@ defmodule Fate.Engine.ReplayTest do
       {zone_id, zone} = zone_create(scene_id, "Corner")
 
       state = Replay.derive("bm-1", [scene, zone])
-      assert length(hd(state.scenes).zones) == 1
-      assert hd(hd(state.scenes).zones).id == zone_id
-      assert hd(hd(state.scenes).zones).name == "Corner"
+      assert length(state.active_scene.zones) == 1
+      assert hd(state.active_scene.zones).id == zone_id
+      assert hd(state.active_scene.zones).name == "Corner"
     end
 
     test "entity_move sets zone_id on entity" do

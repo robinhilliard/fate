@@ -37,7 +37,7 @@ defmodule Fate.EngineTest do
       {bookmark, _events} = create_bookmark()
       assert {:ok, state} = Engine.derive_state(bookmark.id)
       assert state.bookmark_id == bookmark.id
-      assert length(state.scenes) == 1
+      assert length(state.scene_templates) == 1
     end
 
     test "returns error for nonexistent bookmark" do
@@ -113,21 +113,26 @@ defmodule Fate.EngineTest do
   end
 
   describe "load_player_events/1" do
-    test "stops at bookmark_create boundary for forked bookmarks" do
+    test "filters out bookmark_create and template events, shows non-GM entity events" do
       {parent, _} = create_bookmark()
 
       {:ok, child} = Fate.Game.Bookmarks.fork(parent.id, "Child")
 
       Engine.append_event(child.id, %{
         type: :entity_create,
-        description: "Create NPC",
-        detail: %{"entity_id" => Ash.UUID.generate(), "name" => "NPC", "kind" => "npc"}
+        description: "Create Hero",
+        detail: %{
+          "entity_id" => Ash.UUID.generate(),
+          "name" => "Hero",
+          "kind" => "pc",
+          "controller_id" => "player1"
+        }
       })
 
       {:ok, events} = Engine.load_player_events(child.id)
       types = Enum.map(events, & &1.type)
       assert :entity_create in types
-      assert :bookmark_create in types
+      refute :bookmark_create in types
       refute :scene_start in types
     end
   end

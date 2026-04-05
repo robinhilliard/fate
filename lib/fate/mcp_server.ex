@@ -97,7 +97,8 @@ defmodule Fate.McpServer do
       },
       %{
         name: "list_scenes",
-        description: "List all scenes with their status, zones, and situation aspects",
+        description:
+          "List all scene templates and the active scene (if any) with their zones and situation aspects",
         inputSchema: %{type: "object", properties: %{}}
       },
       %{
@@ -302,7 +303,8 @@ defmodule Fate.McpServer do
       },
       %{
         name: "create_scene",
-        description: "Create a new scene with zones and situation aspects",
+        description:
+          "Create a new scene template (prep object) with zones and situation aspects. Use start_scene to activate it.",
         inputSchema: %{
           type: "object",
           properties: %{
@@ -382,24 +384,34 @@ defmodule Fate.McpServer do
       },
       %{
         name: "add_zone",
-        description: "Add a zone to the active scene",
+        description:
+          "Add a zone to a scene template or the active scene. If an active scene is running and no scene_id is specified, adds to the active scene.",
         inputSchema: %{
           type: "object",
           properties: %{
-            scene_id: %{type: "string", description: "Scene ID to add zone to"},
+            scene_id: %{
+              type: "string",
+              description: "Scene template ID (optional — defaults to active scene if running)"
+            },
             name: %{type: "string", description: "Zone name"},
             hidden: %{type: "boolean", description: "Start hidden (default true)"}
           },
-          required: ["scene_id", "name"]
+          required: ["name"]
         }
       },
       %{
         name: "end_scene",
-        description: "End a scene. Clears all stress and removes boosts.",
+        description: "End the active scene. Clears all stress and removes boosts.",
+        inputSchema: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "start_scene",
+        description:
+          "Activate a scene template for play. Copies the template onto the table as the active scene.",
         inputSchema: %{
           type: "object",
           properties: %{
-            scene_id: %{type: "string", description: "Scene ID to end"}
+            scene_id: %{type: "string", description: "Scene template ID to activate"}
           },
           required: ["scene_id"]
         }
@@ -592,7 +604,7 @@ defmodule Fate.McpServer do
       },
       %{
         name: "scene_modify",
-        description: "Edit a scene's name, description, or GM notes",
+        description: "Edit a scene template's name, description, or GM notes",
         inputSchema: %{
           type: "object",
           properties: %{
@@ -798,7 +810,8 @@ defmodule Fate.McpServer do
         gm_fate_points: derived.gm_fate_points,
         entity_count: map_size(derived.entities),
         entities: derived.entities |> Map.values() |> Enum.map(&entity_summary/1),
-        active_scene: derived.scenes |> Enum.find(&(&1.status == :active)) |> scene_summary()
+        scene_templates: Enum.map(derived.scene_templates, &scene_summary/1),
+        active_scene: if(derived.active_scene, do: scene_summary(derived.active_scene))
       }
 
       {:ok, [%{type: "text", text: Jason.encode!(summary, pretty: true)}], state}
@@ -849,8 +862,12 @@ defmodule Fate.McpServer do
 
   def handle_call_tool("list_scenes", _args, state) do
     with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
-      scenes = Enum.map(derived.scenes, &scene_detail/1)
-      {:ok, [%{type: "text", text: Jason.encode!(scenes, pretty: true)}], state}
+      result = %{
+        templates: Enum.map(derived.scene_templates, &scene_detail/1),
+        active_scene: if(derived.active_scene, do: scene_detail(derived.active_scene))
+      }
+
+      {:ok, [%{type: "text", text: Jason.encode!(result, pretty: true)}], state}
     else
       _ -> {:error, %{code: -32000, message: "Failed to derive state"}, state}
     end
@@ -1009,8 +1026,8 @@ defmodule Fate.McpServer do
     }
 
     case Engine.append_event(state.bookmark_id, %{
-           type: :scene_start,
-           description: "Start scene: #{args["name"]}",
+           type: :template_scene_create,
+           description: "Create scene: #{args["name"]}",
            detail: detail
          }) do
       {:ok, _, _} ->
@@ -1213,27 +1230,42 @@ defmodule Fate.McpServer do
     end
   end
 
-  def handle_call_tool("add_zone", %{"scene_id" => scene_id, "name" => name} = args, state) do
+  def handle_call_tool("add_zone", %{"name" => name} = args, state) do
+    scene_id = args["scene_id"]
+
+    event_type =
+      with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
+        if derived.active_scene != nil and
+             (scene_id == nil or scene_id == derived.active_scene.template_id or
+                scene_id == derived.active_scene.id),
+           do: :active_zone_add,
+           else: :template_zone_create
+      else
+        _ -> :template_zone_create
+      end
+
+    detail =
+      %{
+        "zone_id" => Ash.UUID.generate(),
+        "name" => name,
+        "hidden" => Map.get(args, "hidden", true)
+      }
+      |> then(fn d -> if scene_id, do: Map.put(d, "scene_id", scene_id), else: d end)
+
     case Engine.append_event(state.bookmark_id, %{
-           type: :zone_create,
+           type: event_type,
            description: "Create zone: #{name}",
-           detail: %{
-             "scene_id" => scene_id,
-             "zone_id" => Ash.UUID.generate(),
-             "name" => name,
-             "hidden" => Map.get(args, "hidden", true)
-           }
+           detail: detail
          }) do
       {:ok, _, _} -> {:ok, [%{type: "text", text: "Created zone '#{name}'"}], state}
       {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
     end
   end
 
-  def handle_call_tool("end_scene", %{"scene_id" => scene_id}, state) do
+  def handle_call_tool("end_scene", _args, state) do
     case Engine.append_event(state.bookmark_id, %{
-           type: :scene_end,
-           description: "End scene",
-           detail: %{"scene_id" => scene_id}
+           type: :active_scene_end,
+           description: "End active scene"
          }) do
       {:ok, _, _} -> {:ok, [%{type: "text", text: "Scene ended"}], state}
       {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
@@ -1364,8 +1396,18 @@ defmodule Fate.McpServer do
   def handle_call_tool("modify_zone", %{"zone_id" => zone_id} = args, state) do
     detail = pick_present_keys(%{"zone_id" => zone_id}, args, ~w(name hidden))
 
+    event_type =
+      with {:ok, derived} <- Engine.derive_state(state.bookmark_id) do
+        if derived.active_scene != nil and
+             Enum.any?(derived.active_scene.zones, &(&1.id == zone_id)),
+           do: :active_zone_modify,
+           else: :template_zone_modify
+      else
+        _ -> :template_zone_modify
+      end
+
     case Engine.append_event(state.bookmark_id, %{
-           type: :zone_modify,
+           type: event_type,
            description: "Modify zone",
            detail: detail
          }) do
@@ -1509,7 +1551,7 @@ defmodule Fate.McpServer do
     detail = pick_present_keys(%{"scene_id" => scene_id}, args, ~w(name description gm_notes))
 
     case Engine.append_event(state.bookmark_id, %{
-           type: :scene_modify,
+           type: :template_scene_modify,
            description: "Edit scene",
            detail: detail
          }) do
@@ -1726,8 +1768,8 @@ defmodule Fate.McpServer do
         |> Enum.map(fn e -> %{name: e.name, kind: e.kind} end)
 
       scene_names =
-        derived.scenes
-        |> Enum.map(fn s -> %{name: s.name, status: s.status} end)
+        derived.scene_templates
+        |> Enum.map(fn s -> %{name: s.name} end)
 
       payload = %{
         style: style,
@@ -1735,7 +1777,8 @@ defmodule Fate.McpServer do
         events: event_summaries,
         notes: notes,
         entities: entity_names,
-        scenes: scene_names
+        scene_templates: scene_names,
+        active_scene: if(derived.active_scene, do: %{name: derived.active_scene.name})
       }
 
       {:ok, [%{type: "text", text: Jason.encode!(payload, pretty: true)}], state}
@@ -1839,6 +1882,17 @@ defmodule Fate.McpServer do
     end
   end
 
+  def handle_call_tool("start_scene", %{"scene_id" => scene_id}, state) do
+    case Engine.append_event(state.bookmark_id, %{
+           type: :active_scene_start,
+           description: "Start scene",
+           detail: %{"scene_id" => scene_id}
+         }) do
+      {:ok, _, _} -> {:ok, [%{type: "text", text: "Scene started from template #{scene_id}"}], state}
+      {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
+    end
+  end
+
   def handle_call_tool(tool_name, _args, state) do
     {:error, %{code: -32601, message: "Unknown tool: #{tool_name}"}, state}
   end
@@ -1873,7 +1927,8 @@ defmodule Fate.McpServer do
           campaign_name: derived.campaign_name,
           system: derived.system,
           entities: derived.entities |> Map.values() |> Enum.map(&entity_summary/1),
-          scenes: Enum.map(derived.scenes, &scene_summary/1)
+          scene_templates: Enum.map(derived.scene_templates, &scene_summary/1),
+          active_scene: if(derived.active_scene, do: scene_summary(derived.active_scene))
         }
 
         {:ok,
@@ -1972,14 +2027,13 @@ defmodule Fate.McpServer do
   defp scene_summary(nil), do: nil
 
   defp scene_summary(scene),
-    do: %{id: scene.id, name: scene.name, status: scene.status, zone_count: length(scene.zones)}
+    do: %{id: scene.id, name: scene.name, zone_count: length(scene.zones)}
 
   defp scene_detail(scene) do
     %{
       id: scene.id,
       name: scene.name,
       description: scene.description,
-      status: scene.status,
       zones:
         Enum.map(scene.zones, fn z ->
           %{

@@ -24,10 +24,29 @@ defmodule Fate.Game.Event do
         one_of: [
           :create_campaign,
           :set_system,
+          # Legacy scene types (handled for backward compat)
           :scene_start,
           :scene_end,
+          :scene_modify,
           :zone_create,
           :zone_modify,
+          # Template scene types (prep — hidden from non-GM players)
+          :template_scene_create,
+          :template_scene_modify,
+          :template_zone_create,
+          :template_zone_modify,
+          :template_aspect_add,
+          :template_entity_place,
+          # Active scene types (play — visible to all)
+          :active_scene_start,
+          :active_scene_end,
+          :active_scene_update,
+          :active_zone_add,
+          :active_zone_modify,
+          :active_aspect_add,
+          :active_aspect_modify,
+          :active_aspect_remove,
+          # Entity / game events
           :entity_enter_scene,
           :entity_move,
           :entity_create,
@@ -58,7 +77,6 @@ defmodule Fate.Game.Event do
           :taken_out,
           :mook_eliminate,
           :bookmark_create,
-          :scene_modify,
           :note
         ]
       ]

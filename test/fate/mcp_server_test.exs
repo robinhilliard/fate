@@ -13,18 +13,28 @@ defmodule Fate.McpServerTest do
         detail: %{"name" => "Test"}
       })
 
-    {:ok, scene} =
+    scene_id = Ash.UUID.generate()
+
+    {:ok, template} =
       Game.append_event(%{
         parent_id: root.id,
-        type: :scene_start,
+        type: :template_scene_create,
         description: "Default",
-        detail: %{"scene_id" => Ash.UUID.generate(), "name" => "Test Scene"}
+        detail: %{"scene_id" => scene_id, "name" => "Test Scene"}
+      })
+
+    {:ok, activate} =
+      Game.append_event(%{
+        parent_id: template.id,
+        type: :active_scene_start,
+        description: "Start scene",
+        detail: %{"scene_id" => scene_id}
       })
 
     {:ok, bookmark} =
       Game.create_bookmark(%{
         name: "Test Bookmark",
-        head_event_id: scene.id
+        head_event_id: activate.id
       })
 
     %{bookmark_id: bookmark.id}
@@ -128,8 +138,7 @@ defmodule Fate.McpServerTest do
 
   defp get_scene_id(state) do
     {:ok, derived} = Engine.derive_state(state.bookmark_id)
-    scene = Enum.find(derived.scenes, &(&1.status == :active))
-    scene.id
+    hd(derived.scene_templates).id
   end
 
   defp add_zone(state, scene_id, name) do
@@ -436,9 +445,10 @@ defmodule Fate.McpServerTest do
       assert {:ok, [%{type: "text", text: json}], _} =
                McpServer.handle_call_tool("list_scenes", %{}, state)
 
-      scenes = Jason.decode!(json)
-      assert length(scenes) >= 1
-      assert hd(scenes)["name"] == "Test Scene"
+      data = Jason.decode!(json)
+      assert is_list(data["templates"])
+      assert length(data["templates"]) >= 1
+      assert hd(data["templates"])["name"] == "Test Scene"
     end
   end
 
@@ -938,18 +948,28 @@ defmodule Fate.McpServerTest do
           detail: %{"name" => "Second"}
         })
 
-      {:ok, scene2} =
+      scene2_id = Ash.UUID.generate()
+
+      {:ok, template2} =
         Game.append_event(%{
           parent_id: root2.id,
-          type: :scene_start,
+          type: :template_scene_create,
           description: "Scene",
-          detail: %{"scene_id" => Ash.UUID.generate(), "name" => "Scene"}
+          detail: %{"scene_id" => scene2_id, "name" => "Scene"}
+        })
+
+      {:ok, activate2} =
+        Game.append_event(%{
+          parent_id: template2.id,
+          type: :active_scene_start,
+          description: "Start scene",
+          detail: %{"scene_id" => scene2_id}
         })
 
       {:ok, bookmark2} =
         Game.create_bookmark(%{
           name: "Second Bookmark",
-          head_event_id: scene2.id
+          head_event_id: activate2.id
         })
 
       assert {:ok, [%{type: "text", text: text}], new_state} =
@@ -1118,7 +1138,7 @@ defmodule Fate.McpServerTest do
       payload = Jason.decode!(json)
       assert Map.has_key?(payload, "events")
       assert Map.has_key?(payload, "entities")
-      assert Map.has_key?(payload, "scenes")
+      assert Map.has_key?(payload, "scene_templates")
       assert payload["style"] == "narrative"
     end
   end

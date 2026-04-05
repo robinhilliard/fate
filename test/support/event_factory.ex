@@ -41,6 +41,7 @@ defmodule Fate.EventFactory do
     {entity_id, build_event(:entity_create, detail)}
   end
 
+  @doc "Legacy scene_start (creates + activates in one step for backward compat tests)"
   def scene_start(name, opts \\ []) do
     scene_id = opts[:scene_id] || Ash.UUID.generate()
 
@@ -57,6 +58,31 @@ defmodule Fate.EventFactory do
     {scene_id, build_event(:scene_start, detail)}
   end
 
+  def template_scene_create(name, opts \\ []) do
+    scene_id = opts[:scene_id] || Ash.UUID.generate()
+
+    detail =
+      %{
+        "scene_id" => scene_id,
+        "name" => name,
+        "description" => opts[:description],
+        "gm_notes" => opts[:gm_notes]
+      }
+      |> put_if(:zones, opts[:zones])
+      |> put_if(:aspects, opts[:aspects])
+
+    {scene_id, build_event(:template_scene_create, detail)}
+  end
+
+  def active_scene_start(scene_id) do
+    build_event(:active_scene_start, %{"scene_id" => scene_id})
+  end
+
+  def active_scene_end(scene_id) do
+    build_event(:active_scene_end, %{"scene_id" => scene_id})
+  end
+
+  @doc "Legacy zone_create"
   def zone_create(scene_id, name, opts \\ []) do
     zone_id = opts[:zone_id] || Ash.UUID.generate()
 
@@ -68,6 +94,19 @@ defmodule Fate.EventFactory do
     }
 
     {zone_id, build_event(:zone_create, detail)}
+  end
+
+  def template_zone_create(scene_id, name, opts \\ []) do
+    zone_id = opts[:zone_id] || Ash.UUID.generate()
+
+    detail = %{
+      "scene_id" => scene_id,
+      "zone_id" => zone_id,
+      "name" => name,
+      "hidden" => opts[:hidden] || false
+    }
+
+    {zone_id, build_event(:template_zone_create, detail)}
   end
 
   def aspect_create(target_id, description, opts \\ []) do

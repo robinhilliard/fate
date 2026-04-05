@@ -336,23 +336,10 @@ defmodule FateWeb.LobbyLive do
              description: "New Game",
              detail: %{"name" => "New Game"}
            }),
-         {:ok, null_scene} <-
-           Fate.Game.append_event(%{
-             parent_id: root_bmk_event.id,
-             type: :scene_start,
-             description: "Default scene",
-             detail: %{
-               "scene_id" => Ash.UUID.generate(),
-               "name" => "No Scene",
-               "description" =>
-                 "Add or switch to another scene using the button on the scene notes card",
-               "gm_notes" => nil
-             }
-           }),
          {:ok, root_bookmark} <-
            Fate.Game.create_bookmark(%{
              name: "New Game",
-             head_event_id: null_scene.id
+             head_event_id: root_bmk_event.id
            }) do
       case Fate.Game.Demo.create_from_root(root_bookmark) do
         {:ok, demo_bookmark} -> demo_bookmark.id

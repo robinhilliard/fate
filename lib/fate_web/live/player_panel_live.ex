@@ -502,10 +502,11 @@ defmodule FateWeb.PlayerPanelLive do
         "entity_move" ->
           zone_name =
             if submit_state do
-              submit_state.scenes
-              |> Enum.flat_map(& &1.zones)
-              |> Enum.find(&(&1.id == params["zone_id"]))
-              |> case do
+              all_zones =
+                (if submit_state.active_scene, do: submit_state.active_scene.zones, else: []) ++
+                  Enum.flat_map(submit_state.scene_templates, & &1.zones)
+
+              case Enum.find(all_zones, &(&1.id == params["zone_id"])) do
                 nil -> "zone"
                 z -> z.name
               end
@@ -523,7 +524,7 @@ defmodule FateWeb.PlayerPanelLive do
 
         "scene_start" ->
           attrs =
-            FateWeb.ModalSubmit.scene_start_attrs(
+            FateWeb.ModalSubmit.template_scene_create_attrs(
               params,
               params["scene_id"] || Ash.UUID.generate()
             )
@@ -535,7 +536,7 @@ defmodule FateWeb.PlayerPanelLive do
           )
 
         "scene_end" ->
-          active = socket.assigns.state.scenes |> Enum.find(&(&1.status == :active))
+          active = socket.assigns.state.active_scene
 
           case FateWeb.ModalSubmit.scene_end_attrs(active) do
             {:ok, attrs} ->
@@ -633,7 +634,7 @@ defmodule FateWeb.PlayerPanelLive do
           )
 
         "scene_modify" ->
-          attrs = FateWeb.ModalSubmit.scene_modify_attrs(params)
+          attrs = FateWeb.ModalSubmit.template_scene_modify_attrs(params)
 
           create_or_update_event(
             params,

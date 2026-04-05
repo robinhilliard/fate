@@ -73,24 +73,64 @@ defmodule Fate.Engine do
   @doc """
   Loads events from bookmark head back to (but not including) the nearest
   bookmark_create event. Used for player-visible event log.
+  Filters to: all events inside scene boundaries + out-of-scene events
+  involving non-GM-controlled entities. Template events are always hidden.
   """
   def load_player_events(bookmark_id) do
-    with {:ok, bookmark} when bookmark != nil <- Game.get_bookmark(bookmark_id) do
-      query = """
-      WITH RECURSIVE chain AS (
-        SELECT * FROM events WHERE id = $1
-        UNION ALL
-        SELECT e.* FROM events e
-        JOIN chain c ON e.id = c.parent_id
-        WHERE c.type != 'bookmark_create'
-      )
-      SELECT * FROM chain ORDER BY timestamp ASC
-      """
-
-      run_event_query(query, bookmark.head_event_id)
+    with {:ok, bookmark} when bookmark != nil <- Game.get_bookmark(bookmark_id),
+         {:ok, events} <- load_event_chain(bookmark.head_event_id),
+         {:ok, state} <- {:ok, Replay.derive(bookmark_id, events)} do
+      non_gm_entity_ids = non_gm_controlled_entity_ids(state)
+      {:ok, filter_player_events(events, non_gm_entity_ids)}
     else
       _ -> {:ok, []}
     end
+  end
+
+  @template_event_types ~w(template_scene_create template_scene_modify template_zone_create template_zone_modify template_aspect_add template_entity_place)a
+
+  defp filter_player_events(events, non_gm_entity_ids) do
+    {filtered, _in_scene} =
+      Enum.reduce(events, {[], false}, fn event, {acc, in_scene} ->
+        cond do
+          event.type == :active_scene_start ->
+            {[event | acc], true}
+
+          event.type == :active_scene_end ->
+            {[event | acc], false}
+
+          event.type == :bookmark_create ->
+            {acc, in_scene}
+
+          event.type in @template_event_types ->
+            {acc, in_scene}
+
+          in_scene ->
+            {[event | acc], in_scene}
+
+          true ->
+            if event_involves_non_gm_entity?(event, non_gm_entity_ids) do
+              {[event | acc], in_scene}
+            else
+              {acc, in_scene}
+            end
+        end
+      end)
+
+    Enum.reverse(filtered)
+  end
+
+  defp event_involves_non_gm_entity?(event, non_gm_entity_ids) do
+    refs = Replay.event_entity_refs(event)
+    not MapSet.disjoint?(refs, non_gm_entity_ids)
+  end
+
+  defp non_gm_controlled_entity_ids(state) do
+    state.entities
+    |> Enum.filter(fn {_id, entity} -> entity.controller_id != nil end)
+    |> Enum.reject(fn {_id, entity} -> entity.kind == :npc end)
+    |> Enum.map(fn {id, _entity} -> id end)
+    |> MapSet.new()
   end
 
   defp run_event_query(sql, event_id) do

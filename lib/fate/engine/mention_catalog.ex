@@ -88,19 +88,22 @@ defmodule Fate.Engine.MentionCatalog do
     acc
   end
 
-  defp reduce_event(%{type: :scene_start} = ev, acc) do
+  defp reduce_event(%{type: type} = ev, acc)
+       when type in [:scene_start, :template_scene_create, :active_scene_start] do
     detail = ev.detail || %{}
     id = detail["scene_id"]
     if id in [nil, ""], do: acc, else: put_scene_start(acc, id, detail)
   end
 
-  defp reduce_event(%{type: :scene_modify} = ev, acc) do
+  defp reduce_event(%{type: type} = ev, acc)
+       when type in [:scene_modify, :template_scene_modify, :active_scene_update] do
     detail = ev.detail || %{}
     id = detail["scene_id"]
     if id in [nil, ""], do: acc, else: put_scene_modify(acc, id, detail)
   end
 
-  defp reduce_event(%{type: :scene_end} = ev, acc) do
+  defp reduce_event(%{type: type} = ev, acc)
+       when type in [:scene_end, :active_scene_end] do
     detail = ev.detail || %{}
     id = detail["scene_id"]
     if id in [nil, ""], do: acc, else: mark_scene_ended(acc, id)

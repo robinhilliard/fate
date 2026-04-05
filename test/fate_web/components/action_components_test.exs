@@ -5,7 +5,8 @@ defmodule FateWeb.ActionComponentsTest do
 
   @empty_state %Fate.Engine.State.DerivedState{
     entities: %{},
-    scenes: []
+    scene_templates: [],
+    active_scene: nil
   }
 
   describe "event_log_index_tooltip/2" do

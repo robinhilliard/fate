@@ -24,7 +24,7 @@ defmodule FateWeb.ModalSubmitTest do
   test "aspect_create_attrs table_scene forces situation role" do
     params = %{"target_ref" => "scene:s1", "description" => "Smoke"}
 
-    assert {:ok, %{detail: detail}} = ModalSubmit.aspect_create_attrs(params, :table_scene)
+    assert {:ok, %{detail: detail}} = ModalSubmit.aspect_create_attrs(params, {:table_scene, false})
     assert detail["role"] == "situation"
     refute Map.has_key?(detail, "hidden")
   end
@@ -59,15 +59,15 @@ defmodule FateWeb.ModalSubmitTest do
     assert :error == ModalSubmit.note_attrs(%{"text" => "  "})
   end
 
-  test "scene_start_attrs uses given scene id" do
+  test "template_scene_create_attrs uses given scene id" do
     params = %{
       "name" => "Dock",
       "scene_description" => "Fog",
       "gm_notes" => "Secret"
     }
 
-    assert %{type: :scene_start, detail: d} =
-             ModalSubmit.scene_start_attrs(params, "scene-uuid-1")
+    assert %{type: :template_scene_create, detail: d} =
+             ModalSubmit.template_scene_create_attrs(params, "scene-uuid-1")
 
     assert d["scene_id"] == "scene-uuid-1"
     assert d["name"] == "Dock"
@@ -116,7 +116,7 @@ defmodule FateWeb.ModalSubmitTest do
     assert d2["effect"] == "+2 Fight"
   end
 
-  test "scene_modify_attrs patches scene fields" do
+  test "template_scene_modify_attrs patches scene fields" do
     params = %{
       "scene_id" => "s1",
       "name" => "New",
@@ -124,7 +124,7 @@ defmodule FateWeb.ModalSubmitTest do
       "gm_notes" => "N"
     }
 
-    assert %{type: :scene_modify, detail: d} = ModalSubmit.scene_modify_attrs(params)
+    assert %{type: :template_scene_modify, detail: d} = ModalSubmit.template_scene_modify_attrs(params)
     assert d["scene_id"] == "s1"
     assert d["name"] == "New"
     assert d["description"] == "Desc"
@@ -134,7 +134,7 @@ defmodule FateWeb.ModalSubmitTest do
   test "scene_end_attrs is ok for active scene only" do
     assert :error == ModalSubmit.scene_end_attrs(nil)
 
-    assert {:ok, %{type: :scene_end, detail: %{"scene_id" => "s9"}}} =
+    assert {:ok, %{type: :active_scene_end, detail: %{"scene_id" => "s9"}}} =
              ModalSubmit.scene_end_attrs(%{id: "s9", name: "Alley"})
   end
 
@@ -178,9 +178,9 @@ defmodule FateWeb.ModalSubmitTest do
     assert d["accepted"] == false
   end
 
-  test "zone_create_attrs generates zone id and hidden" do
+  test "template_zone_create_attrs generates zone id and hidden" do
     params = %{"name" => "Roof"}
-    assert %{type: :zone_create, detail: d} = ModalSubmit.zone_create_attrs("scene-1", params)
+    assert %{type: :template_zone_create, detail: d} = ModalSubmit.template_zone_create_attrs("scene-1", params)
     assert d["scene_id"] == "scene-1"
     assert d["name"] == "Roof"
     assert d["hidden"] == true
@@ -219,13 +219,6 @@ defmodule FateWeb.ModalSubmitTest do
     assert c.detail["accepted"] == true
     assert e.type == :fate_point_earn
     assert e.description == "Earn FP from compel: Slip"
-  end
-
-  test "scene_close_attrs end vs delete wording" do
-    scene = %{id: "s1", name: "Alley"}
-
-    assert %{description: "End scene: Alley"} = ModalSubmit.scene_close_attrs(scene, :end)
-    assert %{description: "Delete scene: Alley"} = ModalSubmit.scene_close_attrs(scene, :delete)
   end
 
   test "table ring entity_remove_attrs keeps name in detail" do

@@ -178,42 +178,46 @@ defmodule FateWeb.ActionComponents do
 
   def compact_event_summary(%{type: :create_campaign} = event, _state) do
     detail = event.detail || %{}
-    "Campaign: #{detail["campaign_name"] || event.description}"
+    "Create campaign #{detail["campaign_name"] || event.description}"
   end
 
   def compact_event_summary(%{type: :set_system} = event, _state) do
     detail = event.detail || %{}
-    "System: #{detail["system"] || "core"}"
+    "Set system to #{detail["system"] || "core"}"
   end
 
   def compact_event_summary(%{type: :entity_create} = event, _state) do
     detail = event.detail || %{}
-    "New #{detail["kind"] || "entity"}: #{detail["name"]}"
+    "Create #{detail["kind"] || "entity"} #{detail["name"]}"
   end
 
   def compact_event_summary(%{type: :entity_modify} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
-    "Edit #{target || detail["name"] || "entity"}"
+    label = entity_label(state, event.target_id) || detail["name"] || "entity"
+    "Edit #{label}"
   end
 
   def compact_event_summary(%{type: :entity_remove} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
-    name = target || detail["name"] || "entity"
-    "Remove #{name}"
+
+    label =
+      entity_label(state, event.target_id) ||
+        detail_label(detail["kind"], detail["name"]) ||
+        "entity"
+
+    "Remove #{label}"
   end
 
   def compact_event_summary(%{type: :aspect_create} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
+    target = entity_label(state, event.target_id)
     resolved = target || target_name(state, event.target_id, detail["target_type"])
     "Add aspect \"#{detail["description"]}\"#{if resolved, do: " on #{resolved}"}"
   end
 
   def compact_event_summary(%{type: :aspect_remove} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
+    target = entity_label(state, event.target_id)
     desc = detail["description"] || detail["aspect_description"]
     resolved = target || target_name(state, event.target_id, detail["target_type"])
 
@@ -230,156 +234,206 @@ defmodule FateWeb.ActionComponents do
 
   def compact_event_summary(%{type: :aspect_compel} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
-    "Compel #{target || "?"}: #{detail["description"] || ""}"
+    target = entity_label(state, event.target_id) || "?"
+    "Compel #{target} with #{detail["description"] || "aspect"}"
   end
 
   def compact_event_summary(%{type: :skill_set} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
+    target = entity_label(state, event.target_id) || "entity"
     rating = detail["rating"]
 
-    skill_text =
-      if rating == 0, do: "Remove #{detail["skill"]}", else: "#{detail["skill"]} → +#{rating}"
-
-    "#{skill_text} — #{target}"
+    if rating == 0 do
+      "Remove #{detail["skill"]} from #{target}"
+    else
+      "Set #{detail["skill"]} to +#{rating} on #{target}"
+    end
   end
 
   def compact_event_summary(%{type: :stunt_add} = event, state) do
     detail = event.detail || %{}
-    "Stunt: #{detail["name"]} — #{entity_name(state, event.target_id)}"
+    target = entity_label(state, event.target_id) || "entity"
+    "Add stunt #{detail["name"]} to #{target}"
   end
 
   def compact_event_summary(%{type: :stunt_remove} = event, state) do
-    "Remove stunt — #{entity_name(state, event.target_id)}"
+    target = entity_label(state, event.target_id) || "entity"
+    "Remove stunt from #{target}"
   end
 
-  def compact_event_summary(%{type: :scene_start} = event, _state) do
+  def compact_event_summary(%{type: type} = event, _state)
+      when type in [:scene_start, :template_scene_create] do
     detail = event.detail || %{}
-    "Scene: #{detail["name"]}"
+    "Create scene #{detail["name"]}"
   end
 
-  def compact_event_summary(%{type: :scene_end} = event, _state) do
+  def compact_event_summary(%{type: :active_scene_start} = event, state) do
+    detail = event.detail || %{}
+    scene_id = detail["scene_id"]
+
+    name =
+      case Enum.find(state.scene_templates, &(&1.id == scene_id)) do
+        nil -> detail["name"]
+        template -> template.name
+      end
+
+    "Start scene #{name || "Untitled"}"
+  end
+
+  def compact_event_summary(%{type: type} = event, _state)
+      when type in [:scene_end, :active_scene_end] do
     event.description || "End scene"
   end
 
-  def compact_event_summary(%{type: :scene_modify}, _state), do: "Edit scene"
+  def compact_event_summary(%{type: type}, _state)
+      when type in [:scene_modify, :template_scene_modify],
+      do: "Edit scene"
 
-  def compact_event_summary(%{type: :zone_create} = event, _state) do
+  def compact_event_summary(%{type: :active_scene_update}, _state), do: "Update scene"
+
+  def compact_event_summary(%{type: type} = event, _state)
+      when type in [:zone_create, :template_zone_create, :active_zone_add] do
     detail = event.detail || %{}
-    "Zone: #{detail["name"]}"
+    "Add zone #{detail["name"]}"
   end
 
-  def compact_event_summary(%{type: :zone_modify} = event, state) do
+  def compact_event_summary(%{type: type} = event, state)
+      when type in [:zone_modify, :template_zone_modify, :active_zone_modify] do
     detail = event.detail || %{}
     zone = zone_name(state, detail["zone_id"])
     "#{if detail["hidden"] == false, do: "Reveal", else: "Hide"} zone#{if zone, do: " #{zone}"}"
   end
 
+  def compact_event_summary(%{type: :template_aspect_add} = event, _state) do
+    detail = event.detail || %{}
+    "Add aspect \"#{detail["description"]}\""
+  end
+
+  def compact_event_summary(%{type: :active_aspect_add} = event, _state) do
+    detail = event.detail || %{}
+    "Add aspect \"#{detail["description"]}\""
+  end
+
+  def compact_event_summary(%{type: :active_aspect_modify}, _state), do: "Modify scene aspect"
+  def compact_event_summary(%{type: :active_aspect_remove}, _state), do: "Remove scene aspect"
+
+  def compact_event_summary(%{type: :template_entity_place} = event, state) do
+    detail = event.detail || %{}
+    label = entity_label(state, detail["entity_id"]) || "entity"
+    "Place #{label} in scene"
+  end
+
   def compact_event_summary(%{type: :entity_enter_scene} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
+    actor = entity_label(state, event.actor_id) || "entity"
     zone = zone_name(state, detail["zone_id"])
-    "#{actor} enters#{if zone, do: " #{zone}"}"
+    if zone, do: "#{actor} enters #{zone}", else: "#{actor} enters scene"
   end
 
   def compact_event_summary(%{type: :entity_move} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
+    actor = entity_label(state, event.actor_id) || "entity"
     zone = zone_name(state, detail["zone_id"])
-    if zone, do: "#{actor} moves to #{zone}", else: "#{actor} leaves all zones"
+    if zone, do: "Move #{actor} to #{zone}", else: "#{actor} leaves zone"
   end
 
   def compact_event_summary(%{type: :roll_attack} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
-
-    "#{actor} attacks #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
+    actor = entity_label(state, event.actor_id) || "entity"
+    "#{actor} attacks with #{detail["skill"] || "?"} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
   end
 
   def compact_event_summary(%{type: :roll_defend} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
-
-    "#{actor} defends #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
+    actor = entity_label(state, event.actor_id) || "entity"
+    "#{actor} defends with #{detail["skill"] || "?"} #{format_dice(detail["fudge_dice"] || [])} = #{detail["raw_total"] || "?"}"
   end
 
   def compact_event_summary(%{type: :roll_overcome} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
-    "#{actor} overcomes #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
+    actor = entity_label(state, event.actor_id) || "entity"
+    "#{actor} overcomes with #{detail["skill"] || "?"} #{format_dice(detail["fudge_dice"] || [])}"
   end
 
   def compact_event_summary(%{type: :roll_create_advantage} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
-
-    "#{actor} creates advantage #{detail["skill"] || ""} #{format_dice(detail["fudge_dice"] || [])}"
+    actor = entity_label(state, event.actor_id) || "entity"
+    "#{actor} creates advantage with #{detail["skill"] || "?"} #{format_dice(detail["fudge_dice"] || [])}"
   end
 
   def compact_event_summary(%{type: :invoke} = event, state) do
     detail = event.detail || %{}
-    actor = entity_name(state, event.actor_id)
-    "#{actor} invokes: #{detail["description"] || "aspect"}"
+    actor = entity_label(state, event.actor_id) || "entity"
+    "#{actor} invokes #{detail["description"] || "aspect"}"
   end
 
   def compact_event_summary(%{type: :shifts_resolved} = event, state) do
     detail = event.detail || %{}
-    target = entity_name(state, event.target_id)
-    "#{detail["shifts"] || 0} shifts#{if target, do: " on #{target}"}"
+    target = entity_label(state, event.target_id)
+    "Resolve #{detail["shifts"] || 0} shifts#{if target, do: " on #{target}"}"
   end
 
   def compact_event_summary(%{type: :redirect_hit} = event, state) do
-    target = entity_name(state, event.target_id)
+    target = entity_label(state, event.target_id)
     "Redirect hit#{if target, do: " to #{target}"}"
   end
 
   def compact_event_summary(%{type: :stress_apply} = event, state) do
     detail = event.detail || %{}
-    "#{entity_name(state, event.target_id)} stress ×#{detail["box_index"]}"
+    target = entity_label(state, event.target_id) || "entity"
+    "Apply stress box #{detail["box_index"]} to #{target}"
   end
 
   def compact_event_summary(%{type: :stress_clear} = event, state) do
-    "#{entity_name(state, event.target_id)} clears stress"
+    target = entity_label(state, event.target_id) || "entity"
+    "Clear all stress on #{target}"
   end
 
   def compact_event_summary(%{type: :consequence_take} = event, state) do
     detail = event.detail || %{}
-    "#{entity_name(state, event.target_id)} takes #{detail["severity"]}: #{detail["aspect_text"]}"
+    target = entity_label(state, event.target_id) || "entity"
+    "#{target} takes #{detail["severity"]} consequence #{detail["aspect_text"]}"
   end
 
   def compact_event_summary(%{type: :consequence_recover} = event, state) do
-    "#{entity_name(state, event.target_id)} recovers consequence"
+    target = entity_label(state, event.target_id) || "entity"
+    "#{target} recovers consequence"
   end
 
   def compact_event_summary(%{type: :fate_point_spend} = event, state) do
-    "#{entity_name(state, event.target_id)} spends FP"
+    target = entity_label(state, event.target_id) || "entity"
+    "#{target} spends fate point"
   end
 
   def compact_event_summary(%{type: :fate_point_earn} = event, state) do
-    "#{entity_name(state, event.target_id)} earns FP"
+    target = entity_label(state, event.target_id) || "entity"
+    "#{target} earns fate point"
   end
 
   def compact_event_summary(%{type: :fate_point_refresh} = event, state) do
-    "#{entity_name(state, event.target_id)} refreshes FP"
+    target = entity_label(state, event.target_id) || "entity"
+    "Refresh fate points on #{target}"
   end
 
   def compact_event_summary(%{type: :concede} = event, state) do
-    "#{entity_name(state, event.actor_id)} concedes"
+    actor = entity_label(state, event.actor_id) || "entity"
+    "#{actor} concedes"
   end
 
   def compact_event_summary(%{type: :taken_out} = event, state) do
-    "#{entity_name(state, event.target_id) || entity_name(state, event.actor_id)} taken out!"
+    target = entity_label(state, event.target_id) || entity_label(state, event.actor_id) || "entity"
+    "#{target} is taken out"
   end
 
   def compact_event_summary(%{type: :mook_eliminate} = event, state) do
-    "#{entity_name(state, event.target_id)} mook eliminated"
+    target = entity_label(state, event.target_id) || "mook"
+    "Eliminate #{target}"
   end
 
   def compact_event_summary(%{type: :note} = event, state) do
     detail = event.detail || %{}
     text = detail["text"] || event.description || ""
-    target = entity_name(state, event.target_id)
+    target = entity_label(state, event.target_id)
     resolved = target || target_name(state, event.target_id, detail["target_type"])
     truncated = if String.length(text) > 60, do: String.slice(text, 0..57) <> "...", else: text
     if resolved, do: "#{truncated} (#{resolved})", else: truncated
@@ -429,7 +483,8 @@ defmodule FateWeb.ActionComponents do
     end
   end
 
-  def event_log_index_tooltip(%{type: :scene_modify} = event, _state) do
+  def event_log_index_tooltip(%{type: type} = event, _state)
+      when type in [:scene_modify, :template_scene_modify, :active_scene_update] do
     detail = event.detail || %{}
 
     lines =
@@ -521,12 +576,36 @@ defmodule FateWeb.ActionComponents do
     end
   end
 
+  defp entity_label(state, id) do
+    case Map.get(state.entities, id) do
+      nil ->
+        case Map.get(state.removed_entities, id) do
+          nil -> nil
+          %{name: name, kind: kind} -> "#{kind_word(kind)} #{name}"
+        end
+
+      entity ->
+        "#{kind_word(entity.kind)} #{entity.name}"
+    end
+  end
+
+  defp kind_word(:pc), do: "PC"
+  defp kind_word(:npc), do: "NPC"
+  defp kind_word(:vehicle), do: "vehicle"
+  defp kind_word(:mook), do: "mook"
+  defp kind_word(other) when is_atom(other), do: to_string(other)
+  defp kind_word(_), do: "entity"
+
+  defp detail_label(nil, nil), do: nil
+  defp detail_label(nil, name), do: name
+  defp detail_label(kind, nil), do: kind
+  defp detail_label(kind, name), do: "#{kind} #{name}"
+
   def zone_name(nil, _), do: nil
   def zone_name(_, nil), do: nil
 
   def zone_name(state, zone_id) do
-    state.scenes
-    |> Enum.flat_map(& &1.zones)
+    all_zones(state)
     |> Enum.find(&(&1.id == zone_id))
     |> case do
       nil -> nil
@@ -540,14 +619,13 @@ defmodule FateWeb.ActionComponents do
   def target_name(state, id, target_type) do
     case target_type do
       "scene" ->
-        case Enum.find(state.scenes, &(&1.id == id)) do
+        case find_scene(state, id) do
           nil -> "scene"
           scene -> "scene #{scene.name}"
         end
 
       "zone" ->
-        state.scenes
-        |> Enum.flat_map(& &1.zones)
+        all_zones(state)
         |> Enum.find(&(&1.id == id))
         |> case do
           nil -> "zone"
@@ -666,10 +744,10 @@ defmodule FateWeb.ActionComponents do
 
   def modal_fields(%{modal: "aspect_create"} = assigns) do
     fd = assigns[:form_data] || %{}
-    all_scenes = if assigns.state, do: assigns.state.scenes, else: []
+    scenes = if assigns.state, do: all_scenes(assigns.state), else: []
 
     scene_and_zone_options =
-      Enum.flat_map(all_scenes, fn scene ->
+      Enum.flat_map(scenes, fn scene ->
         [{"scene:#{scene.id}", "Scene: #{scene.name}"}] ++
           Enum.map(scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
       end)
@@ -830,7 +908,7 @@ defmodule FateWeb.ActionComponents do
   end
 
   def modal_fields(%{modal: "scene_end"} = assigns) do
-    active = assigns.state && assigns.state.scenes |> Enum.find(&(&1.status == :active))
+    active = assigns.state && assigns.state.active_scene
     assigns = assign(assigns, :active, active)
 
     ~H"""
@@ -861,10 +939,8 @@ defmodule FateWeb.ActionComponents do
     fd = assigns[:form_data] || %{}
 
     zones =
-      if assigns.state do
-        assigns.state.scenes
-        |> Enum.filter(&(&1.status == :active))
-        |> Enum.flat_map(& &1.zones)
+      if assigns.state && assigns.state.active_scene do
+        assigns.state.active_scene.zones
       else
         []
       end
@@ -1165,10 +1241,10 @@ defmodule FateWeb.ActionComponents do
     scenes =
       cond do
         editing? && assigns.state ->
-          assigns.state.scenes
+          all_scenes(assigns.state)
 
-        assigns.state ->
-          Enum.filter(assigns.state.scenes, &(&1.status == :active))
+        assigns.state && assigns.state.active_scene ->
+          [assigns.state.active_scene]
 
         true ->
           []
@@ -1283,7 +1359,7 @@ defmodule FateWeb.ActionComponents do
 
   defp note_target_options(state) do
     scene_opts =
-      Enum.flat_map(state.scenes, fn scene ->
+      Enum.flat_map(all_scenes(state), fn scene ->
         [{"scene:#{scene.id}", "Scene: #{scene.name}"}] ++
           Enum.map(scene.zones, fn z -> {"zone:#{z.id}", "Zone: #{z.name}"} end)
       end)
@@ -1294,6 +1370,27 @@ defmodule FateWeb.ActionComponents do
       |> Enum.map(fn e -> {"entity:#{e.id}", "#{e.name} (#{e.kind})"} end)
 
     scene_opts ++ entity_opts
+  end
+
+  # --- Scene helpers ---
+
+  defp all_scenes(state) do
+    active = if state.active_scene, do: [state.active_scene], else: []
+    (state.scene_templates || []) ++ active
+  end
+
+  defp all_zones(state) do
+    all_scenes(state) |> Enum.flat_map(& &1.zones)
+  end
+
+  defp find_scene(state, id) do
+    a = state.active_scene
+
+    if a && (a.id == id || Map.get(a, :template_id) == id) do
+      a
+    else
+      Enum.find(state.scene_templates, &(&1.id == id))
+    end
   end
 
   # --- Form input components ---

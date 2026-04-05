@@ -23,6 +23,7 @@ export const SpringLayout = {
 
     this.branchKey = this.el.dataset.sceneKey || "default"
     this.sceneId = this.el.dataset.sceneId || "default"
+    this.participantKey = this.el.dataset.participantKey || "gm"
 
     this.handleEvent("expanded_entities_changed", ({expanded}) => {
       try {
@@ -204,6 +205,7 @@ export const SpringLayout = {
     this.savePositions()
 
     this.branchKey = this.el.dataset.sceneKey || "default"
+    this.participantKey = this.el.dataset.participantKey || "gm"
     if (sceneChanged) {
       this.sceneId = newSceneId
     }
@@ -928,11 +930,11 @@ export const SpringLayout = {
   },
 
   tableStorageKey() {
-    return `fate-layout:${this.branchKey}:table`
+    return `fate-layout:${this.branchKey}:${this.participantKey}:table`
   },
 
   sceneStorageKey() {
-    return `fate-layout:${this.branchKey}:scene:${this.sceneId}`
+    return `fate-layout:${this.branchKey}:${this.participantKey}:scene:${this.sceneId}`
   },
 
   isSceneElement(node) {
