@@ -89,7 +89,6 @@ export const SpringLayout = {
       if (e.target.closest("button, a, input, select, textarea, .entity-circle, .zone-token")) return
 
       const selectEl = e.target.closest("[phx-click='select']")
-      if (!selectEl) return
 
       e.stopPropagation()
 
@@ -111,14 +110,21 @@ export const SpringLayout = {
       if (this._clickTimer) clearTimeout(this._clickTimer)
 
       this._clickSpringEl = springEl
-      const id = selectEl.getAttribute("phx-value-id")
-      const type = selectEl.getAttribute("phx-value-type")
 
-      this._clickTimer = setTimeout(() => {
-        this._clickTimer = null
-        this._clickSpringEl = null
-        if (id && type) this.pushEvent("select", { id, type })
-      }, 250)
+      if (selectEl) {
+        const id = selectEl.getAttribute("phx-value-id")
+        const type = selectEl.getAttribute("phx-value-type")
+        this._clickTimer = setTimeout(() => {
+          this._clickTimer = null
+          this._clickSpringEl = null
+          if (id && type) this.pushEvent("select", { id, type })
+        }, 250)
+      } else {
+        this._clickTimer = setTimeout(() => {
+          this._clickTimer = null
+          this._clickSpringEl = null
+        }, 250)
+      }
     }
 
     this.el.addEventListener("click", this._onClickCapture, true)

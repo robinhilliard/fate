@@ -318,32 +318,32 @@ defmodule Fate.Engine.Replay do
       hidden: detail["hidden"] || false
     }
 
+    add_fn = fn s -> %{s | aspects: s.aspects ++ [aspect]} end
+
     case target_type do
       "entity" ->
-        update_entity(state, target_id, fn entity ->
-          %{entity | aspects: entity.aspects ++ [aspect]}
-        end)
+        update_entity(state, target_id, add_fn)
 
       "scene" ->
+        state = update_template(state, target_id, add_fn)
+
         if state.active_scene && state.active_scene.template_id == target_id do
-          update_active_scene(state, fn scene ->
-            %{scene | aspects: scene.aspects ++ [aspect]}
-          end)
+          update_active_scene(state, add_fn)
         else
-          update_template(state, target_id, fn template ->
-            %{template | aspects: template.aspects ++ [aspect]}
-          end)
+          state
         end
 
       "zone" ->
+        state = update_template_zone(state, target_id, fn zone ->
+          %{zone | aspects: zone.aspects ++ [aspect]}
+        end)
+
         if state.active_scene && Enum.any?(state.active_scene.zones, &(&1.id == target_id)) do
           update_active_zone(state, target_id, fn zone ->
             %{zone | aspects: zone.aspects ++ [aspect]}
           end)
         else
-          update_template_zone(state, target_id, fn zone ->
-            %{zone | aspects: zone.aspects ++ [aspect]}
-          end)
+          state
         end
 
       _ ->
@@ -360,6 +360,8 @@ defmodule Fate.Engine.Replay do
     update_fn = aspect_modify_fn(aspect_id, detail)
 
     if is_binary(target_type) and is_binary(target_id) do
+      map_fn = fn s -> %{s | aspects: Enum.map(s.aspects, update_fn)} end
+
       case target_type do
         "entity" ->
           update_entity(state, target_id, fn entity ->
@@ -367,25 +369,22 @@ defmodule Fate.Engine.Replay do
           end)
 
         "scene" ->
+          state = update_template(state, target_id, map_fn)
+
           if state.active_scene && state.active_scene.template_id == target_id do
-            update_active_scene(state, fn scene ->
-              %{scene | aspects: Enum.map(scene.aspects, update_fn)}
-            end)
+            update_active_scene(state, map_fn)
           else
-            update_template(state, target_id, fn template ->
-              %{template | aspects: Enum.map(template.aspects, update_fn)}
-            end)
+            state
           end
 
         "zone" ->
+          zone_map_fn = fn zone -> %{zone | aspects: Enum.map(zone.aspects, update_fn)} end
+          state = update_template_zone(state, target_id, zone_map_fn)
+
           if state.active_scene && Enum.any?(state.active_scene.zones, &(&1.id == target_id)) do
-            update_active_zone(state, target_id, fn zone ->
-              %{zone | aspects: Enum.map(zone.aspects, update_fn)}
-            end)
+            update_active_zone(state, target_id, zone_map_fn)
           else
-            update_template_zone(state, target_id, fn zone ->
-              %{zone | aspects: Enum.map(zone.aspects, update_fn)}
-            end)
+            state
           end
 
         _ ->
@@ -445,6 +444,8 @@ defmodule Fate.Engine.Replay do
     target_id = detail["target_id"]
 
     if is_binary(target_type) and is_binary(target_id) do
+      reject_fn = fn s -> %{s | aspects: Enum.reject(s.aspects, &(&1.id == aspect_id))} end
+
       case target_type do
         "entity" ->
           update_entity(state, target_id, fn entity ->
@@ -452,25 +453,22 @@ defmodule Fate.Engine.Replay do
           end)
 
         "scene" ->
+          state = update_template(state, target_id, reject_fn)
+
           if state.active_scene && state.active_scene.template_id == target_id do
-            update_active_scene(state, fn scene ->
-              %{scene | aspects: Enum.reject(scene.aspects, &(&1.id == aspect_id))}
-            end)
+            update_active_scene(state, reject_fn)
           else
-            update_template(state, target_id, fn template ->
-              %{template | aspects: Enum.reject(template.aspects, &(&1.id == aspect_id))}
-            end)
+            state
           end
 
         "zone" ->
+          zone_reject_fn = fn zone -> %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))} end
+          state = update_template_zone(state, target_id, zone_reject_fn)
+
           if state.active_scene && Enum.any?(state.active_scene.zones, &(&1.id == target_id)) do
-            update_active_zone(state, target_id, fn zone ->
-              %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
-            end)
+            update_active_zone(state, target_id, zone_reject_fn)
           else
-            update_template_zone(state, target_id, fn zone ->
-              %{zone | aspects: Enum.reject(zone.aspects, &(&1.id == aspect_id))}
-            end)
+            state
           end
 
         _ ->
@@ -574,20 +572,19 @@ defmodule Fate.Engine.Replay do
     detail = event.detail || %{}
     scene_id = detail["scene_id"]
 
+    modify_fn = fn s ->
+      s
+      |> maybe_put(:name, detail["name"])
+      |> maybe_put(:description, detail["description"])
+      |> maybe_put(:gm_notes, detail["gm_notes"])
+    end
+
+    state = update_template(state, scene_id, modify_fn)
+
     if state.active_scene != nil and state.active_scene.template_id == scene_id do
-      update_active_scene(state, fn scene ->
-        scene
-        |> maybe_put(:name, detail["name"])
-        |> maybe_put(:description, detail["description"])
-        |> maybe_put(:gm_notes, detail["gm_notes"])
-      end)
+      update_active_scene(state, modify_fn)
     else
-      update_template(state, scene_id, fn template ->
-        template
-        |> maybe_put(:name, detail["name"])
-        |> maybe_put(:description, detail["description"])
-        |> maybe_put(:gm_notes, detail["gm_notes"])
-      end)
+      state
     end
   end
 
@@ -603,14 +600,16 @@ defmodule Fate.Engine.Replay do
       hidden: detail["hidden"] || false
     }
 
+    state = update_template(state, scene_id, fn template ->
+      %{template | zones: template.zones ++ [zone]}
+    end)
+
     if state.active_scene != nil and state.active_scene.template_id == scene_id do
       update_active_scene(state, fn scene ->
         %{scene | zones: scene.zones ++ [zone]}
       end)
     else
-      update_template(state, scene_id, fn template ->
-        %{template | zones: template.zones ++ [zone]}
-      end)
+      state
     end
   end
 
@@ -624,11 +623,13 @@ defmodule Fate.Engine.Replay do
       |> maybe_put(:hidden, detail["hidden"])
     end
 
+    state = update_template_zone(state, zone_id, modify_fn)
+
     if state.active_scene != nil and
          Enum.any?(state.active_scene.zones, &(&1.id == zone_id)) do
       update_active_zone(state, zone_id, modify_fn)
     else
-      update_template_zone(state, zone_id, modify_fn)
+      state
     end
   end
 
