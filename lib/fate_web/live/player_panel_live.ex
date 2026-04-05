@@ -108,7 +108,12 @@ defmodule FateWeb.PlayerPanelLive do
 
   def handle_event("clear_selection", _params, socket) do
     FateWeb.Helpers.broadcast_selection(socket, [])
-    {:noreply, assign(socket, :selection, [])}
+    FateWeb.Helpers.broadcast_search_selection(socket, MapSet.new())
+
+    {:noreply,
+     socket
+     |> assign(:selection, [])
+     |> assign(:search_selected_ids, MapSet.new())}
   end
 
   def handle_event("start_exchange", %{"type" => type} = params, socket) do

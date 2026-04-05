@@ -65,6 +65,10 @@ defmodule FateWeb.GmPanelLive do
     {:noreply, socket}
   end
 
+  def handle_info({:search_selection_updated, ids}, socket) do
+    {:noreply, assign(socket, :search_selected_ids, ids)}
+  end
+
   def handle_info(:dock_ack, socket) do
     {:noreply, push_event(socket, "close_window", %{})}
   end
@@ -728,6 +732,15 @@ defmodule FateWeb.GmPanelLive do
 
   defp init_state(socket, bookmark_id) do
     Engine.subscribe(bookmark_id)
+
+    pid = socket.assigns.current_participant_id
+
+    if pid do
+      Phoenix.PubSub.subscribe(
+        Fate.PubSub,
+        FateWeb.Helpers.search_selection_topic(bookmark_id, pid)
+      )
+    end
 
     case Engine.derive_state(bookmark_id) do
       {:ok, state} ->
