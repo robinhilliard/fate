@@ -10,7 +10,7 @@ function parseCatalog(el) {
   }
 }
 
-function buildTribute(catalog) {
+function buildTribute(catalog, menuContainer) {
   const entities = (catalog.entities || [])
     .map((e) => ({
       key: e.name || "",
@@ -24,7 +24,7 @@ function buildTribute(catalog) {
     value: t,
   }))
 
-  return new Tribute({
+  const opts = {
     collection: [
       {
         trigger: "@",
@@ -51,7 +51,11 @@ function buildTribute(catalog) {
         },
       },
     ],
-  })
+  }
+
+  if (menuContainer) opts.menuContainer = menuContainer
+
+  return new Tribute(opts)
 }
 
 export const MentionTypeahead = {

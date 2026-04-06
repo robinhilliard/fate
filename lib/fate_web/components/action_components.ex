@@ -78,6 +78,7 @@ defmodule FateWeb.ActionComponents do
            MapSet.member?(my_ids, detail["target_id"]))
 
     index_tooltip_extra = event_log_index_tooltip(event, assigns.state)
+    full_summary = full_event_summary(event, assigns.state)
 
     type_label =
       Map.get(event_type_labels(), event.type) ||
@@ -90,6 +91,7 @@ defmodule FateWeb.ActionComponents do
       assigns
       |> assign(:color, color)
       |> assign(:summary, summary)
+      |> assign(:full_summary, full_summary)
       |> assign(:draggable, draggable)
       |> assign(:involves_me, involves_me)
       |> assign(:index_tooltip, index_tooltip)
@@ -133,7 +135,11 @@ defmodule FateWeb.ActionComponents do
       >
         {@index + 1}
       </span>
-      <span class="flex-1 text-amber-100/80 truncate" style="font-family: 'Patrick Hand', cursive;">
+      <span
+        class="flex-1 text-amber-100/80 truncate"
+        style="font-family: 'Patrick Hand', cursive;"
+        data-summary-tooltip={@full_summary}
+      >
         {@summary}
       </span>
       <%= if editable_type?(@event.type) && !@immutable && !@is_observer do %>
@@ -450,6 +456,32 @@ defmodule FateWeb.ActionComponents do
   end
 
   @doc """
+  Full untruncated event summary for the title tooltip on the event row.
+  Falls back to `compact_event_summary` when there is no additional detail.
+  """
+  def full_event_summary(%{type: :aspect_create} = event, state) do
+    detail = event.detail || %{}
+    target = entity_label(state, event.target_id)
+    resolved = target || target_name(state, event.target_id, detail["target_type"])
+    desc = detail["description"] || ""
+    role = detail["role"]
+    role_str = if role && role not in ["additional", "situation"], do: " (#{role})", else: ""
+    "Add aspect#{role_str}: #{desc}#{if resolved, do: " — #{resolved}"}"
+  end
+
+  def full_event_summary(%{type: :note} = event, state) do
+    detail = event.detail || %{}
+    text = detail["text"] || event.description || ""
+    target = entity_label(state, event.target_id)
+    resolved = target || target_name(state, event.target_id, detail["target_type"])
+    if resolved, do: "#{text} (#{resolved})", else: text
+  end
+
+  def full_event_summary(event, state) do
+    compact_event_summary(event, state)
+  end
+
+  @doc """
   Extra detail for the event log index tooltip when the compact one-line label hides information.
   Returns `nil` when there is nothing useful to add.
   """
@@ -515,6 +547,56 @@ defmodule FateWeb.ActionComponents do
       "Effect: #{effect}"
     else
       nil
+    end
+  end
+
+  def event_log_index_tooltip(%{type: type} = event, _state)
+      when type in [:entity_create, :entity_restore] do
+    detail = event.detail || %{}
+    lines = []
+
+    lines =
+      lines ++
+        if(detail["name"], do: ["Name: #{detail["name"]}"], else: []) ++
+        if(detail["kind"], do: ["Kind: #{detail["kind"]}"], else: []) ++
+        if(detail["controller_id"], do: ["Controller: #{detail["controller_id"]}"], else: []) ++
+        if(detail["fate_points"], do: ["Fate points: #{detail["fate_points"]}"], else: []) ++
+        if(detail["refresh"], do: ["Refresh: #{detail["refresh"]}"], else: [])
+
+    aspects = detail["aspects"] || []
+
+    aspect_lines =
+      Enum.map(aspects, fn a ->
+        role = if a["role"] && a["role"] != "additional", do: "(#{a["role"]}) ", else: ""
+        "  #{role}#{a["description"]}"
+      end)
+
+    lines = if aspect_lines != [], do: lines ++ ["Aspects:"] ++ aspect_lines, else: lines
+
+    case lines do
+      [] -> nil
+      _ -> Enum.join(lines, "\n")
+    end
+  end
+
+  def event_log_index_tooltip(%{type: :entity_remove} = event, state) do
+    detail = event.detail || %{}
+    name = entity_label(state, event.target_id) || detail_label(detail["kind"], detail["name"])
+    if name, do: name, else: nil
+  end
+
+  def event_log_index_tooltip(%{type: :aspect_create} = event, _state) do
+    detail = event.detail || %{}
+    desc = detail["description"]
+    role = detail["role"]
+
+    lines =
+      (if(desc, do: ["Description: #{desc}"], else: []) ++
+         if(role && role != "additional", do: ["Role: #{role}"], else: []))
+
+    case lines do
+      [] -> nil
+      _ -> Enum.join(lines, "\n")
     end
   end
 

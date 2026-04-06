@@ -1082,6 +1082,7 @@ defmodule FateWeb.PlayerPanelLive do
             this._ro.observe(this.el)
 
             this._scheduleRestore()
+            this._initTooltip()
           },
           beforeUpdate() {
             this._captureScrollIntent()
@@ -1092,8 +1093,58 @@ defmodule FateWeb.PlayerPanelLive do
           destroyed() {
             this.el.removeEventListener("scroll", this._captureScrollIntent)
             this.el.removeEventListener("pointerdown", this._onPointerDown, true)
+            this.el.removeEventListener("mouseover", this._tipShow)
+            this.el.removeEventListener("mouseout", this._tipHide)
             this._mo?.disconnect()
             this._ro?.disconnect()
+            if (this._tip) { this._tip.remove(); this._tip = null }
+          },
+          _initTooltip() {
+            this._tip = null
+
+            this._tipShow = (e) => {
+              const el = e.target.closest("[data-summary-tooltip]")
+              if (!el || !this.el.contains(el)) return
+              const text = el.getAttribute("data-summary-tooltip")
+              if (!text) return
+
+              if (!this._tip) {
+                this._tip = document.createElement("div")
+                this._tip.style.cssText =
+                  "position:fixed;z-index:99999;pointer-events:none;" +
+                  "white-space:pre-wrap;font-size:11px;line-height:1.35;" +
+                  "padding:4px 8px;border-radius:4px;" +
+                  "background:rgba(20,14,6,0.95);color:#e8dcc8;" +
+                  "border:1px solid rgba(180,140,80,0.3);" +
+                  "max-width:min(28rem,calc(100vw - 1rem));box-sizing:border-box;"
+                document.body.appendChild(this._tip)
+              }
+
+              this._tip.textContent = text
+              this._tip.style.display = "block"
+
+              const rect = el.getBoundingClientRect()
+              const tipH = this._tip.offsetHeight
+              const tipW = this._tip.offsetWidth
+              let top = rect.bottom + 4
+              let left = rect.left
+
+              if (top + tipH > window.innerHeight - 8) top = rect.top - tipH - 4
+              if (left + tipW > window.innerWidth - 8) left = window.innerWidth - tipW - 8
+              if (left < 4) left = 4
+
+              this._tip.style.top = top + "px"
+              this._tip.style.left = left + "px"
+            }
+
+            this._tipHide = (e) => {
+              const to = e.relatedTarget
+              if (to && to.closest && to.closest("[data-summary-tooltip]")) return
+              if (this._tip) this._tip.style.display = "none"
+            }
+
+            this.el.addEventListener("mouseover", this._tipShow)
+            this.el.addEventListener("mouseout", this._tipHide)
           }
         }
       </script>
@@ -1182,11 +1233,13 @@ defmodule FateWeb.PlayerPanelLive do
   defp format_entity_filter_names(nil, _), do: "(unknown)"
 
   defp format_entity_filter_names(state, selected_ids) do
+    all = Map.merge(state.entities, state.removed_entities)
+
     selected_ids
     |> MapSet.to_list()
     |> Enum.map(fn id ->
       label =
-        case Map.get(state.entities, id) do
+        case Map.get(all, id) do
           %{name: n} when is_binary(n) and n != "" -> n
           _ -> String.slice(id, 0, 8) <> "…"
         end

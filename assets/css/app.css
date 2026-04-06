@@ -383,7 +383,8 @@ input, textarea, [contenteditable="true"] {
   box-sizing: border-box;
   line-height: 1.35;
   text-align: left;
-  z-index: 50;
+  z-index: 9999;
+  overflow: visible;
 }
 
 .event-log-action-tooltip[data-tooltip]:hover::after {
@@ -401,4 +402,47 @@ input, textarea, [contenteditable="true"] {
   text-align: left;
   z-index: 50;
 }
+
+/* Tribute.js typeahead dropdown — match dark amber theme */
+.tribute-container {
+  background: rgba(20, 14, 6, 0.97);
+  border: 1px solid rgba(180, 140, 80, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 99999;
+  margin-top: 4px;
+}
+
+.tribute-container ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: transparent;
+}
+
+.tribute-container li {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: rgba(232, 220, 200, 0.7);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tribute-container li.highlight,
+.tribute-container li:hover {
+  background: rgba(180, 140, 80, 0.15);
+  color: rgba(232, 220, 200, 1);
+}
+
+.tribute-container li span {
+  font-weight: normal;
+}
+
+.tribute-container li.no-match {
+  color: rgba(232, 220, 200, 0.3);
+  font-style: italic;
+  cursor: default;
+}
+
 
