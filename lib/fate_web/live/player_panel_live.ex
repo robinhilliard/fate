@@ -406,7 +406,7 @@ defmodule FateWeb.PlayerPanelLive do
   def handle_event("edit_event", %{"id" => event_id}, socket) do
     event = Enum.find(socket.assigns.events, &(&1.id == event_id))
 
-    if event && editable_type?(event.type) do
+    if event && editable_event?(event) do
       bookmark_id = socket.assigns.bookmark_id
 
       {ctx_state, form_data} =

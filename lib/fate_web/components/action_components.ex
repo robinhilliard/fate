@@ -59,6 +59,14 @@ defmodule FateWeb.ActionComponents do
 
   def editable_type?(type), do: type in @editable_types
 
+  @entity_modify_form_keys MapSet.new(~w(name kind controller_id fate_points refresh))
+
+  def editable_event?(%{type: :entity_modify, detail: detail}) when is_map(detail) do
+    detail |> Map.keys() |> Enum.any?(&MapSet.member?(@entity_modify_form_keys, &1))
+  end
+
+  def editable_event?(%{type: type}), do: editable_type?(type)
+
   # --- Event log ---
 
   def event_row(assigns) do
@@ -142,7 +150,7 @@ defmodule FateWeb.ActionComponents do
       >
         {@summary}
       </span>
-      <%= if editable_type?(@event.type) && !@immutable && !@is_observer do %>
+      <%= if editable_event?(@event) && !@immutable && !@is_observer do %>
         <button
           phx-click="edit_event"
           phx-value-id={@event.id}
@@ -198,15 +206,26 @@ defmodule FateWeb.ActionComponents do
     "Create #{detail["kind"] || "entity"} #{detail["name"]}"
   end
 
-  def compact_event_summary(%{type: :entity_restore} = event, _state) do
-    detail = event.detail || %{}
-    "Restore #{detail["kind"] || "entity"} #{detail["name"]}"
+  def compact_event_summary(%{type: :entity_restore} = event, state) do
+    label = entity_label(state, event.target_id)
+
+    if label do
+      "Restore #{label}"
+    else
+      detail = event.detail || %{}
+      "Restore #{detail["kind"] || "entity"} #{detail["name"]}"
+    end
   end
 
   def compact_event_summary(%{type: :entity_modify} = event, state) do
     detail = event.detail || %{}
     label = entity_label(state, event.target_id) || detail["name"] || "entity"
-    "Edit #{label}"
+
+    cond do
+      not editable_event?(event) && detail["hidden"] == true -> "Hide #{label}"
+      not editable_event?(event) && detail["hidden"] == false -> "Reveal #{label}"
+      true -> "Edit #{label}"
+    end
   end
 
   def compact_event_summary(%{type: :entity_remove} = event, state) do
@@ -550,32 +569,18 @@ defmodule FateWeb.ActionComponents do
     end
   end
 
-  def event_log_index_tooltip(%{type: type} = event, _state)
-      when type in [:entity_create, :entity_restore] do
-    detail = event.detail || %{}
-    lines = []
+  def event_log_index_tooltip(%{type: :entity_create} = event, _state) do
+    entity_detail_tooltip(event.detail || %{})
+  end
 
-    lines =
-      lines ++
-        if(detail["name"], do: ["Name: #{detail["name"]}"], else: []) ++
-        if(detail["kind"], do: ["Kind: #{detail["kind"]}"], else: []) ++
-        if(detail["controller_id"], do: ["Controller: #{detail["controller_id"]}"], else: []) ++
-        if(detail["fate_points"], do: ["Fate points: #{detail["fate_points"]}"], else: []) ++
-        if(detail["refresh"], do: ["Refresh: #{detail["refresh"]}"], else: [])
+  def event_log_index_tooltip(%{type: :entity_restore} = event, state) do
+    entity_id = event.target_id || (event.detail || %{})["entity_id"]
+    entity = Map.get(state.removed_entities, entity_id) || Map.get(state.entities, entity_id)
 
-    aspects = detail["aspects"] || []
-
-    aspect_lines =
-      Enum.map(aspects, fn a ->
-        role = if a["role"] && a["role"] != "additional", do: "(#{a["role"]}) ", else: ""
-        "  #{role}#{a["description"]}"
-      end)
-
-    lines = if aspect_lines != [], do: lines ++ ["Aspects:"] ++ aspect_lines, else: lines
-
-    case lines do
-      [] -> nil
-      _ -> Enum.join(lines, "\n")
+    if entity do
+      entity_state_tooltip(entity)
+    else
+      entity_detail_tooltip(event.detail || %{})
     end
   end
 
@@ -601,6 +606,52 @@ defmodule FateWeb.ActionComponents do
   end
 
   def event_log_index_tooltip(_event, _state), do: nil
+
+  defp entity_detail_tooltip(detail) do
+    lines =
+      if(detail["name"], do: ["Name: #{detail["name"]}"], else: []) ++
+        if(detail["kind"], do: ["Kind: #{detail["kind"]}"], else: []) ++
+        if(detail["controller_id"], do: ["Controller: #{detail["controller_id"]}"], else: []) ++
+        if(detail["fate_points"], do: ["Fate points: #{detail["fate_points"]}"], else: []) ++
+        if(detail["refresh"], do: ["Refresh: #{detail["refresh"]}"], else: [])
+
+    aspects = detail["aspects"] || []
+
+    aspect_lines =
+      Enum.map(aspects, fn a ->
+        role = if a["role"] && a["role"] != "additional", do: "(#{a["role"]}) ", else: ""
+        "  #{role}#{a["description"]}"
+      end)
+
+    lines = if aspect_lines != [], do: lines ++ ["Aspects:"] ++ aspect_lines, else: lines
+
+    case lines do
+      [] -> nil
+      _ -> Enum.join(lines, "\n")
+    end
+  end
+
+  defp entity_state_tooltip(entity) do
+    lines =
+      if(entity.name, do: ["Name: #{entity.name}"], else: []) ++
+        if(entity.kind, do: ["Kind: #{entity.kind}"], else: []) ++
+        if(entity.controller_id, do: ["Controller: #{entity.controller_id}"], else: []) ++
+        if(entity.fate_points, do: ["Fate points: #{entity.fate_points}"], else: []) ++
+        if(entity.refresh, do: ["Refresh: #{entity.refresh}"], else: [])
+
+    aspect_lines =
+      Enum.map(entity.aspects, fn a ->
+        role = if a.role not in [:additional, nil], do: "(#{a.role}) ", else: ""
+        "  #{role}#{a.description}"
+      end)
+
+    lines = if aspect_lines != [], do: lines ++ ["Aspects:"] ++ aspect_lines, else: lines
+
+    case lines do
+      [] -> nil
+      _ -> Enum.join(lines, "\n")
+    end
+  end
 
   defp entity_modify_tooltip_line("name", v) when is_binary(v), do: "Name: #{v}"
 
@@ -1180,6 +1231,7 @@ defmodule FateWeb.ActionComponents do
         )
       )
       |> assign(:controller_options, controller_options)
+      |> assign(:changed_fields, if(editing?, do: fd["changed_fields"]))
 
     ~H"""
     <.entity_select
@@ -1195,6 +1247,7 @@ defmodule FateWeb.ActionComponents do
       e_fp={@e_fp || ""}
       e_refresh={@e_refresh || ""}
       controller_options={@controller_options}
+      changed_fields={@changed_fields}
     />
     """
   end

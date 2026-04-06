@@ -22,9 +22,11 @@ defmodule FateWeb.ModalForms do
   attr :e_refresh, :string, default: ""
   attr :controller_options, :list, default: []
   attr :input_ids, :map, default: %{}
+  attr :changed_fields, :any, default: nil
 
   def entity_edit_fields(assigns) do
     ids = assigns.input_ids || %{}
+    cf = assigns.changed_fields
 
     assigns =
       assigns
@@ -33,9 +35,14 @@ defmodule FateWeb.ModalForms do
       |> assign(:_id_controller, Map.get(ids, :controller))
       |> assign(:_id_fp, Map.get(ids, :fate_points))
       |> assign(:_id_refresh, Map.get(ids, :refresh))
+      |> assign(:_ch_name, cf && MapSet.member?(cf, "name"))
+      |> assign(:_ch_kind, cf && MapSet.member?(cf, "kind"))
+      |> assign(:_ch_controller, cf && MapSet.member?(cf, "controller_id"))
+      |> assign(:_ch_fp, cf && MapSet.member?(cf, "fate_points"))
+      |> assign(:_ch_refresh, cf && MapSet.member?(cf, "refresh"))
 
     ~H"""
-    <div>
+    <div class={[if(@_ch_name, do: "border-l-2 border-amber-400 pl-2")]}>
       <label class="block text-sm text-amber-200/70 mb-1" for={@_id_name || nil}>Name</label>
       <input
         type="text"
@@ -45,7 +52,7 @@ defmodule FateWeb.ModalForms do
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
       />
     </div>
-    <div>
+    <div class={[if(@_ch_kind, do: "border-l-2 border-amber-400 pl-2")]}>
       <label class="block text-sm text-amber-200/70 mb-1" for={@_id_kind || nil}>Kind</label>
       <select
         name="kind"
@@ -63,7 +70,7 @@ defmodule FateWeb.ModalForms do
         <option value="custom" selected={@e_kind == "custom"}>Custom</option>
       </select>
     </div>
-    <div>
+    <div class={[if(@_ch_controller, do: "border-l-2 border-amber-400 pl-2")]}>
       <label class="block text-sm text-amber-200/70 mb-1" for={@_id_controller || nil}>
         Controller
       </label>
@@ -78,7 +85,7 @@ defmodule FateWeb.ModalForms do
         <% end %>
       </select>
     </div>
-    <div>
+    <div class={[if(@_ch_fp, do: "border-l-2 border-amber-400 pl-2")]}>
       <label class="block text-sm text-amber-200/70 mb-1" for={@_id_fp || nil}>Fate Points</label>
       <input
         type="text"
@@ -88,7 +95,7 @@ defmodule FateWeb.ModalForms do
         class="w-full px-3 py-2 bg-amber-900/30 border border-amber-700/30 rounded-lg text-amber-100 text-sm placeholder-amber-200/20"
       />
     </div>
-    <div>
+    <div class={[if(@_ch_refresh, do: "border-l-2 border-amber-400 pl-2")]}>
       <label class="block text-sm text-amber-200/70 mb-1" for={@_id_refresh || nil}>Refresh</label>
       <input
         type="text"

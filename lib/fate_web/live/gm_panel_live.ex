@@ -237,25 +237,21 @@ defmodule FateWeb.GmPanelLive do
               :ok
 
             e ->
-              detail = Search.restore_detail(e)
-
               Engine.append_event(socket.assigns.bookmark_id, %{
                 type: :entity_restore,
                 target_id: id,
                 description: "Restore #{e.name || "entity"}",
-                detail: detail
+                detail: %{"entity_id" => id}
               })
           end
         end)
 
         if parents_first == [] do
-          detail = Search.restore_detail(entity)
-
           Engine.append_event(socket.assigns.bookmark_id, %{
             type: :entity_restore,
             target_id: entity_id,
             description: "Restore #{entity.name || "entity"}",
-            detail: detail
+            detail: %{"entity_id" => entity_id}
           })
         end
 
@@ -725,8 +721,15 @@ defmodule FateWeb.GmPanelLive do
   end
 
   defp prune_search_selection(socket, results) do
+    state = socket.assigns.state
+
     result_entity_ids =
-      results |> Enum.filter(&(&1.type == :entity)) |> MapSet.new(& &1.id)
+      results
+      |> Enum.filter(&(&1.type == :entity))
+      |> Enum.flat_map(fn r ->
+        if state, do: Search.ownership_tree(state, r.id), else: [r.id]
+      end)
+      |> MapSet.new()
 
     result_scene_ids =
       results |> Enum.filter(&(&1.type == :scene)) |> MapSet.new(& &1.id)

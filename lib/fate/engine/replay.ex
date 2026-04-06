@@ -176,7 +176,7 @@ defmodule Fate.Engine.Replay do
       :create_campaign -> apply_create_campaign(event, state)
       :set_system -> apply_set_system(event, state)
       :entity_create -> apply_entity_create(event, state)
-      :entity_restore -> apply_entity_create(event, state)
+      :entity_restore -> apply_entity_restore(event, state)
       :entity_modify -> apply_entity_modify(event, state)
       :entity_remove -> apply_entity_remove(event, state)
       :aspect_create -> apply_aspect_create(event, state)
@@ -291,6 +291,16 @@ defmodule Fate.Engine.Replay do
       |> maybe_put(:table_y, detail["table_y"])
       |> maybe_put(:hidden, detail["hidden"])
     end)
+  end
+
+  defp apply_entity_restore(event, state) do
+    entity_id = event.target_id || get_in(event.detail, ["entity_id"])
+
+    case Map.pop(state.removed_entities, entity_id) do
+      {nil, _} -> state
+      {entity, remaining} ->
+        %{state | entities: Map.put(state.entities, entity_id, entity), removed_entities: remaining}
+    end
   end
 
   defp apply_entity_remove(event, state) do

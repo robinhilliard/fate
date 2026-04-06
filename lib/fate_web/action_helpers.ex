@@ -9,6 +9,8 @@ defmodule FateWeb.ActionHelpers do
   alias Fate.Engine
   alias Fate.Engine.Replay
 
+  @entity_modify_form_keys MapSet.new(~w(name kind controller_id fate_points refresh))
+
   def bookmark_boundary_index(events) do
     events
     |> Enum.with_index()
@@ -305,8 +307,11 @@ defmodule FateWeb.ActionHelpers do
     entity_id = detail["entity_id"] || event.target_id || ""
     entity = state && entity_id != "" && Map.get(state.entities, entity_id)
 
+    changed = detail |> Map.keys() |> MapSet.new() |> MapSet.intersection(@entity_modify_form_keys)
+
     edit_base(event, %{
       "entity_id" => entity_id,
+      "changed_fields" => changed,
       "name" => field_from_detail_or_entity(detail, entity, "name", :name, & &1),
       "kind" =>
         field_from_detail_or_entity(detail, entity, "kind", :kind, fn
