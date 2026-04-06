@@ -111,6 +111,28 @@ defmodule FateWeb.LobbyLive do
     {:noreply, assign(socket, :show_mcp_setup, !socket.assigns.show_mcp_setup)}
   end
 
+  defp mcp_config_details(assigns) do
+    ~H"""
+    <details class="group">
+      <summary class="text-xs text-amber-200/50 cursor-pointer hover:text-amber-200/70 transition">
+        {@label} <span class="text-amber-200/30">({@hint})</span>
+      </summary>
+      <div class="mt-1 relative">
+        <pre class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded text-xs text-amber-100 font-mono overflow-x-auto"><code>{@config}</code></pre>
+        <button
+          id={"copy-#{@id}-config"}
+          phx-hook=".CopyToClipboard"
+          data-copy={@config}
+          class="absolute top-1 right-1 p-1 bg-amber-900/50 rounded hover:bg-amber-800/50 transition"
+          title="Copy config"
+        >
+          <.icon name="hero-clipboard-document" class="w-3 h-3 text-amber-200/40" />
+        </button>
+      </div>
+    </details>
+    """
+  end
+
   @impl true
   def render(%{mode: :loading} = assigns) do
     ~H"""
@@ -304,47 +326,36 @@ defmodule FateWeb.LobbyLive do
               </p>
 
               <div class="space-y-2">
-                <details class="group">
-                  <summary class="text-xs text-amber-200/50 cursor-pointer hover:text-amber-200/70 transition">
-                    Cursor <span class="text-amber-200/30">(.cursor/mcp.json)</span>
-                  </summary>
-                  <div class="mt-1 relative">
-                    <pre
-                      class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded text-xs text-amber-100 font-mono overflow-x-auto"
-                      phx-no-curly-interpolation
-                    ><code>{mcp_config_json(@mcp_url)}</code></pre>
-                    <button
-                      id="copy-cursor-config"
-                      phx-hook=".CopyToClipboard"
-                      data-copy={mcp_config_json(@mcp_url)}
-                      class="absolute top-1 right-1 p-1 bg-amber-900/50 rounded hover:bg-amber-800/50 transition"
-                      title="Copy config"
-                    >
-                      <.icon name="hero-clipboard-document" class="w-3 h-3 text-amber-200/40" />
-                    </button>
-                  </div>
-                </details>
-
-                <details class="group">
-                  <summary class="text-xs text-amber-200/50 cursor-pointer hover:text-amber-200/70 transition">
-                    Claude Desktop <span class="text-amber-200/30">(claude_desktop_config.json)</span>
-                  </summary>
-                  <div class="mt-1 relative">
-                    <pre
-                      class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded text-xs text-amber-100 font-mono overflow-x-auto"
-                      phx-no-curly-interpolation
-                    ><code>{mcp_config_json(@mcp_url)}</code></pre>
-                    <button
-                      id="copy-claude-config"
-                      phx-hook=".CopyToClipboard"
-                      data-copy={mcp_config_json(@mcp_url)}
-                      class="absolute top-1 right-1 p-1 bg-amber-900/50 rounded hover:bg-amber-800/50 transition"
-                      title="Copy config"
-                    >
-                      <.icon name="hero-clipboard-document" class="w-3 h-3 text-amber-200/40" />
-                    </button>
-                  </div>
-                </details>
+                <.mcp_config_details
+                  id="cursor"
+                  label="Cursor"
+                  hint=".cursor/mcp.json"
+                  config={mcp_config_json(@mcp_url)}
+                />
+                <.mcp_config_details
+                  id="claude"
+                  label="Claude Desktop"
+                  hint="claude_desktop_config.json"
+                  config={mcp_config_json(@mcp_url)}
+                />
+                <.mcp_config_details
+                  id="windsurf"
+                  label="Windsurf"
+                  hint="~/.codeium/windsurf/mcp_config.json"
+                  config={mcp_config_json(@mcp_url)}
+                />
+                <.mcp_config_details
+                  id="chatgpt"
+                  label="ChatGPT Desktop"
+                  hint="Settings → Developer → Edit Config"
+                  config={mcp_config_json(@mcp_url)}
+                />
+                <.mcp_config_details
+                  id="vscode"
+                  label="VS Code / Copilot"
+                  hint=".vscode/mcp.json"
+                  config={vscode_config_json(@mcp_url)}
+                />
               </div>
             <% else %>
               <p class="text-xs text-amber-200/30 italic">Detecting endpoint URL…</p>
@@ -483,6 +494,13 @@ defmodule FateWeb.LobbyLive do
   defp mcp_config_json(mcp_url) do
     Jason.encode!(
       %{"mcpServers" => %{"fateble" => %{"url" => mcp_url}}},
+      pretty: true
+    )
+  end
+
+  defp vscode_config_json(mcp_url) do
+    Jason.encode!(
+      %{"servers" => %{"fateble" => %{"type" => "sse", "url" => mcp_url}}},
       pretty: true
     )
   end
