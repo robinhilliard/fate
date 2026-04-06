@@ -1915,9 +1915,30 @@ defmodule Fate.McpServer do
         mimeType: "application/json"
       },
       %{
+        uri: "fate://help/concepts",
+        name: "App Concepts",
+        description:
+          "Fate RPG terminology as used in the app, plus app concepts: event chain, derived state, bookmarks, roles",
+        mimeType: "text/markdown"
+      },
+      %{
+        uri: "fate://help/ui",
+        name: "UI Guide",
+        description:
+          "Full UI guide: table, entity cards, ring menus, zones, GM panel, player panel, exchange builder, docking, selection filtering",
+        mimeType: "text/markdown"
+      },
+      %{
+        uri: "fate://rules/fate",
+        name: "Fate RPG Quick Reference",
+        description:
+          "Quick reference for the Fate RPG rules the app implements, with full attribution and links to rulebooks",
+        mimeType: "text/markdown"
+      },
+      %{
         uri: "fate://rules/ladder",
         name: "Fate Ladder",
-        description: "The Fate ladder (+0 to +8)",
+        description: "The Fate ladder (−2 Terrible to +8 Legendary)",
         mimeType: "application/json"
       }
     ]
@@ -1951,6 +1972,18 @@ defmodule Fate.McpServer do
     end
   end
 
+  def handle_read_resource("fate://help/concepts", state) do
+    {:ok, [%{type: "text", text: Fate.McpHelp.concepts(), mimeType: "text/markdown"}], state}
+  end
+
+  def handle_read_resource("fate://help/ui", state) do
+    {:ok, [%{type: "text", text: Fate.McpHelp.ui(), mimeType: "text/markdown"}], state}
+  end
+
+  def handle_read_resource("fate://rules/fate", state) do
+    {:ok, [%{type: "text", text: Fate.McpHelp.fate_rules(), mimeType: "text/markdown"}], state}
+  end
+
   def handle_read_resource("fate://rules/ladder", state) do
     ladder = [
       %{rating: 8, name: "Legendary"},
@@ -1962,11 +1995,19 @@ defmodule Fate.McpServer do
       %{rating: 2, name: "Fair"},
       %{rating: 1, name: "Average"},
       %{rating: 0, name: "Mediocre"},
-      %{rating: -1, name: "Terrible"}
+      %{rating: -1, name: "Poor"},
+      %{rating: -2, name: "Terrible"}
     ]
 
+    attribution =
+      "Based on Fate Core System and Fate Accelerated Edition (https://fate-srd.com/), " <>
+        "products of Evil Hat Productions, LLC, licensed under CC-BY 3.0 " <>
+        "(http://creativecommons.org/licenses/by/3.0/)."
+
+    result = %{attribution: attribution, ladder: ladder}
+
     {:ok,
-     [%{type: "text", text: Jason.encode!(ladder, pretty: true), mimeType: "application/json"}],
+     [%{type: "text", text: Jason.encode!(result, pretty: true), mimeType: "application/json"}],
      state}
   end
 

@@ -29,6 +29,8 @@ defmodule FateWeb.LobbyLive do
            |> assign(:existing_participants, existing)
            |> assign(:stored_name, stored_name)
            |> assign(:stored_role, stored_role)
+           |> assign(:mcp_url, nil)
+           |> assign(:show_mcp_setup, false)
            |> assign(:mode, :prompt)}
       end
     else
@@ -99,6 +101,14 @@ defmodule FateWeb.LobbyLive do
       |> push_navigate(to: ~p"/table/#{bookmark_id}")
 
     {:noreply, socket}
+  end
+
+  def handle_event("set_mcp_url", %{"url" => url}, socket) do
+    {:noreply, assign(socket, :mcp_url, url)}
+  end
+
+  def handle_event("toggle_mcp_setup", _params, socket) do
+    {:noreply, assign(socket, :show_mcp_setup, !socket.assigns.show_mcp_setup)}
   end
 
   @impl true
@@ -239,16 +249,136 @@ defmodule FateWeb.LobbyLive do
             </div>
           </div>
         <% end %>
+
+        <%!-- MCP setup --%>
+        <div class="border-t border-amber-700/20 pt-4 mt-2">
+          <button
+            phx-click="toggle_mcp_setup"
+            class="flex items-center gap-2 w-full text-left text-xs text-amber-200/40 uppercase tracking-wide hover:text-amber-200/60 transition"
+          >
+            <.icon
+              name={if @show_mcp_setup, do: "hero-chevron-down", else: "hero-chevron-right"}
+              class="w-3 h-3"
+            />
+            Connect an AI Assistant
+          </button>
+
+          <div class={[
+            "overflow-hidden transition-all duration-200",
+            if(@show_mcp_setup, do: "max-h-[600px] opacity-100 mt-3", else: "max-h-0 opacity-0")
+          ]}>
+            <p class="text-xs text-amber-200/50 mb-3">
+              Fateble includes an MCP server that lets AI assistants prep and run
+              Fate RPG games alongside the GM.
+            </p>
+
+            <%= if @mcp_url do %>
+              <div class="mb-3">
+                <label class="block text-xs text-amber-200/40 uppercase tracking-wide mb-1">
+                  MCP Endpoint
+                </label>
+                <div class="flex items-center gap-1">
+                  <code
+                    class="flex-1 px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded text-xs text-amber-100 font-mono truncate"
+                    id="mcp-url-display"
+                  >
+                    {@mcp_url}
+                  </code>
+                  <button
+                    id="copy-mcp-url"
+                    phx-hook=".CopyToClipboard"
+                    data-copy={@mcp_url}
+                    class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded hover:bg-amber-800/30 transition"
+                    title="Copy URL"
+                  >
+                    <.icon name="hero-clipboard-document" class="w-3.5 h-3.5 text-amber-200/50" />
+                  </button>
+                </div>
+              </div>
+
+              <label class="block text-xs text-amber-200/40 uppercase tracking-wide mb-1">
+                Configuration
+              </label>
+              <p class="text-xs text-amber-200/40 mb-2">
+                Add this to your AI client's MCP config:
+              </p>
+
+              <div class="space-y-2">
+                <details class="group">
+                  <summary class="text-xs text-amber-200/50 cursor-pointer hover:text-amber-200/70 transition">
+                    Cursor <span class="text-amber-200/30">(.cursor/mcp.json)</span>
+                  </summary>
+                  <div class="mt-1 relative">
+                    <pre
+                      class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded text-xs text-amber-100 font-mono overflow-x-auto"
+                      phx-no-curly-interpolation
+                    ><code>{mcp_config_json(@mcp_url)}</code></pre>
+                    <button
+                      id="copy-cursor-config"
+                      phx-hook=".CopyToClipboard"
+                      data-copy={mcp_config_json(@mcp_url)}
+                      class="absolute top-1 right-1 p-1 bg-amber-900/50 rounded hover:bg-amber-800/50 transition"
+                      title="Copy config"
+                    >
+                      <.icon name="hero-clipboard-document" class="w-3 h-3 text-amber-200/40" />
+                    </button>
+                  </div>
+                </details>
+
+                <details class="group">
+                  <summary class="text-xs text-amber-200/50 cursor-pointer hover:text-amber-200/70 transition">
+                    Claude Desktop <span class="text-amber-200/30">(claude_desktop_config.json)</span>
+                  </summary>
+                  <div class="mt-1 relative">
+                    <pre
+                      class="px-2 py-1.5 bg-amber-900/30 border border-amber-700/20 rounded text-xs text-amber-100 font-mono overflow-x-auto"
+                      phx-no-curly-interpolation
+                    ><code>{mcp_config_json(@mcp_url)}</code></pre>
+                    <button
+                      id="copy-claude-config"
+                      phx-hook=".CopyToClipboard"
+                      data-copy={mcp_config_json(@mcp_url)}
+                      class="absolute top-1 right-1 p-1 bg-amber-900/50 rounded hover:bg-amber-800/50 transition"
+                      title="Copy config"
+                    >
+                      <.icon name="hero-clipboard-document" class="w-3 h-3 text-amber-200/40" />
+                    </button>
+                  </div>
+                </details>
+              </div>
+            <% else %>
+              <p class="text-xs text-amber-200/30 italic">Detecting endpoint URL…</p>
+            <% end %>
+          </div>
+        </div>
       </div>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".LobbyIdentity">
         export default {
           mounted() {
+            this.pushEvent("set_mcp_url", { url: window.location.origin + "/api/mcp" })
             this.handleEvent("store_identity", ({participant_id, name, role}) => {
               if (participant_id) localStorage.setItem("fate_participant_id", participant_id)
               else localStorage.removeItem("fate_participant_id")
               localStorage.setItem("fate_name", name)
               localStorage.setItem("fate_role", role)
+            })
+          }
+        }
+      </script>
+
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyToClipboard">
+        export default {
+          mounted() {
+            this.el.addEventListener("click", () => {
+              const text = this.el.dataset.copy
+              navigator.clipboard.writeText(text).then(() => {
+                const icon = this.el.querySelector("span[data-icon]") || this.el.querySelector("span")
+                if (!icon) return
+                const original = icon.className
+                icon.className = icon.className.replace("hero-clipboard-document", "hero-check")
+                setTimeout(() => { icon.className = original }, 1500)
+              })
             })
           }
         }
@@ -348,6 +478,13 @@ defmodule FateWeb.LobbyLive do
     else
       _ -> raise "Failed to bootstrap"
     end
+  end
+
+  defp mcp_config_json(mcp_url) do
+    Jason.encode!(
+      %{"mcpServers" => %{"fateble" => %{"url" => mcp_url}}},
+      pretty: true
+    )
   end
 
   defp random_color do

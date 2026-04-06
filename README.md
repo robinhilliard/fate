@@ -159,6 +159,18 @@ When you join for the first time, the app creates a demo scenario (The Iron Carn
 
 **MCP endpoint:** `http://localhost:4000/api/mcp` (SSE transport, CORS enabled)
 
+### MCP Resources
+
+The MCP server exposes help documentation as discoverable resources. Any connected agent can read these to understand and operate the app:
+
+| URI | Description |
+|-----|-------------|
+| `fate://help/concepts` | Fate RPG terminology and app concepts (event chain, derived state, bookmarks, roles) |
+| `fate://help/ui` | Full UI guide: table, cards, ring menus, panels, exchange builder, selection filtering |
+| `fate://rules/fate` | Fate RPG quick reference (implemented rules only), with CC-BY 3.0 attribution and links to rulebooks |
+| `fate://rules/ladder` | The Fate ladder (−2 Terrible to +8 Legendary) as JSON |
+| `fate://game/state` | Current derived game state as JSON |
+
 ## Architecture
 
 The app is built around an **event-sourced engine**: every game action is an immutable event. Events form a linked chain (each points to its parent) and the chain is replayed to produce the current `DerivedState`. **Bookmarks** point to a head event; forking a bookmark creates a new chain branch from that point. **Participants** are people at the table (GM + players) and entities can be controlled by a participant.
