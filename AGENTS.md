@@ -7,7 +7,7 @@ This is a web application written using the Phoenix web framework.
 
 ### Project-specific conventions
 
-- **Full-screen LiveViews**: The main LiveViews (`TableLive`, `ActionsLive`) intentionally skip `Layouts.app` and render full-screen via `root.html.heex` only. This is a deliberate design choice for the tabletop interface
+- **Full-screen LiveViews**: The main LiveViews (`TableLive`, `GmPanelLive`, `PlayerPanelLive`) intentionally skip `Layouts.app` and render full-screen via `root.html.heex` only. This is a deliberate design choice for the tabletop interface
 - **No DaisyUI**: DaisyUI has been removed. All components use raw Tailwind CSS classes
 - **Shared helpers**: Use `FateWeb.Helpers` for cross-LiveView utility functions (e.g. `localhost?/1`)
 - **Table components**: Shared function components live in `FateWeb.TableComponents` — import them rather than duplicating

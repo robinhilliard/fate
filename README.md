@@ -79,45 +79,35 @@ Every game action -- creating a character, rolling dice, taking stress -- is rec
 
 ### User Interface
 
-The app runs across two browser windows that stay in sync with each other and those of other players:
+The app centres on a single full-screen **table view** at `/table/:bookmark_id`. Two tool panels — the **GM Panel** and the **Player Panel** — can be toggled as docked sidebars inside the table or popped out into separate browser windows. Everything stays in sync via PubSub.
 
 #### The Table
 
-`/table/:bookmark_id` is the main play surface — a full-screen canvas with a felt-texture background where everything floats in a spring-physics layout. Entity cards, zones, scene aspects, and the GM notes card are all draggable elements that repel each other and settle into a readable arrangement.
+The table is a full-screen canvas with a felt-texture background where everything floats in a spring-physics layout. Entity cards, zones, scene aspects, and the GM notes card are all draggable elements that repel each other and settle into a readable arrangement.
 
 **Entity cards** show name, kind, aspects, skills, stunts, stress boxes, consequences, and a fate point token. Cards are color-coded by entity and styled with hand-drawn fonts. Click the expand button to reveal the full character sheet. **Ring menus** appear on hover over the fate point token — buttons fan out in a viewport-aware arc for quick actions like +/- FP, concede, hide/reveal, and remove.
 
-<img src="docs/images/entity_card.png" alt="Entity card showing aspects, skills, stunts, stress tracks, and ring menu" width="400">
-
 **The GM notes card** shows the current scene name, description, and private GM notes. Its ring menu provides scene management: start/end/switch scenes, add zones, and add situational aspects.
-
-<img src="docs/images/scene_notes.png" alt="GM scene notes card with ring menu for scene management" width="350">
 
 **Zones** are dashed-border regions on the table. Drag an entity's token into a zone to move them; drag out onto the table to leave. The GM can hide and reveal zones for players.
 
-<img src="docs/images/zones.png" alt="Zones with entity tokens — drag to move between zones" width="400">
-
 **Scene aspects** float as small cards near the scene title, styled by role — blue for situation aspects, yellow for boosts. The scene title and description are visible to all players.
 
-<img src="docs/images/scene_and_aspects.png" alt="Scene title, description, and situational aspect cards on the table" width="500">
+The table also supports **pinning** (double-click to lock a card in place), **layout memory** (positions persist in localStorage per bookmark and scene), **warp animations** (entities and aspects fade in/out smoothly), and **selection sync** (click to select; selections sync across Table and panel windows). **Participants** sit around the border of the table, with the GM on one edge and players distributed around the remaining sides.
 
-The table also supports **pinning** (double-click to lock a card in place), **layout memory** (positions persist in localStorage per bookmark and scene), **warp animations** (entities and aspects fade in/out smoothly), and **selection sync** (click to select; selections sync across Table and Actions windows). **Participants** sit around the border of the table, with the GM on one edge and players distributed around the remaining sides.
+#### GM Panel
 
-#### The Actions Window
+`/panel/gm/:bookmark_id` — docks on the left side of the table or opens as a standalone window. Provides bookmark management (list, fork, archive, navigate) and a search interface for entities and scenes. Entity and scene selections made here filter the event log in the Player Panel.
 
-`/actions/:bookmark_id` opens in a second tab for the event log, bookmark tree, and action palette.
+#### Player Panel
 
-**Bookmarks** organize the game as a branching timeline. Each bookmark is a save point — fork from any bookmark to explore alternate scenarios, then switch back. Locked parent bookmarks form a shared foundation for all child timelines.
+`/panel/player/:bookmark_id` — docks on the right side of the table or opens as a standalone window. Shows the **event log** (newest first, with invalid-event warnings), the **action palette** with quick action buttons and the entity list, and the **exchange builder** for multi-step conflicts. The event log is filtered by entity selections — select entities on the table or in the GM search panel and the log narrows to events involving those entities. The GM can also delete or reorder events.
 
-<img src="docs/images/bookmarks.png" alt="Bookmark tree with locked parent and navigable child bookmark" width="500">
+The **exchange builder** handles multi-step conflicts. Start an Attack, Overcome, Create Advantage, or Defend exchange, then collaboratively build a sequence of steps — rolls, invokes, shifts, stress, consequences — in a shared build lane. The exchange is synchronised in real time across all connected players so the sequence can be built collaboratively. Drag steps from the palette to reorder, or drag them out to remove. Click dice faces to cycle +/0/- manually, or hit Roll for random. When ready, commit all steps to the event log at once.
 
-The left panel shows the **event log** — a complete history of game events, newest first. The GM can delete or reorder events by dragging. Invalid events (those referencing missing targets) are flagged with a warning icon. The right panel has the **action palette** with exchange starters, quick action buttons, and the entity list. Drag an entity onto any action button to pre-fill it.
+#### Bookmark Browser
 
-<img src="docs/images/events_and_action_pallette.png" alt="Event log with color-coded entries and the action palette with exchange starters, quick actions, and entity list" width="600">
-
-The **exchange builder** handles multi-step conflicts. Start an Attack, Overcome, Create Advantage, or Defend exchange, then collaboratively build a sequence of steps — rolls, invokes, shifts, stress, consequences — in a shared build lane. Drag steps from the palette to reorder, or drag them out to remove. Click dice faces to cycle +/0/- manually, or hit Roll for random. When ready, commit all steps to the event log at once.
-
-<img src="docs/images/exchange_builder.png" alt="Exchange builder with step palette, build lane, and roll configuration" width="400">
+`/branches` is a standalone page listing all active bookmarks with links to navigate directly to any bookmark's table view.
 
 ### Roles
 
@@ -179,34 +169,44 @@ lib/
 │   ├── application.ex            # OTP application supervision tree
 │   ├── engine.ex                 # Event loading, state derivation, PubSub
 │   ├── engine/
+│   │   ├── mention_catalog.ex    # Mention data for typeahead fields
 │   │   ├── replay.ex             # Pure event replay: events → derived state
+│   │   ├── search.ex             # Entity/scene search for GM panel
 │   │   └── state.ex              # Struct definitions for derived state
 │   ├── game.ex                   # Ash domain (Event, Bookmark, Participant)
 │   ├── game/
-│   │   ├── bookmarks.ex          # Bookmark lifecycle (fork, archive, leaf)
-│   │   ├── demo.ex               # Demo scenario seed data
 │   │   ├── bookmark.ex           # Ash resource
 │   │   ├── bookmark_participant.ex
+│   │   ├── bookmarks.ex          # Bookmark lifecycle (fork, archive, leaf)
+│   │   ├── demo.ex               # Demo scenario seed data
+│   │   ├── entity_kind_tags.ex   # Kind-to-tag mapping for compact display
 │   │   ├── event.ex              # Ash resource (37 event types)
 │   │   ├── events.ex             # Event reorder and delete operations
 │   │   └── participant.ex
+│   ├── mcp_notifier.ex           # GenServer: PubSub → MCP resource updates
 │   ├── mcp_server.ex             # MCP protocol handler for AI assistants
 │   ├── release.ex                # Release tasks (migrations without Mix)
 │   └── repo.ex                   # Ecto/AshPostgres repo
 ├── fate_web.ex                   # Module entrypoint (html_helpers, verified_routes)
 ├── fate_web/
+│   ├── action_helpers.ex         # Shared action/modal logic across panels
+│   ├── modal_submit.ex           # Modal form submission handling
+│   ├── helpers.ex                # Shared LiveView helpers (identity, etc.)
 │   ├── live/
-│   │   ├── table_live.ex         # Main tabletop view
-│   │   ├── actions_live.ex       # Action palette + exchange builder
-│   │   ├── branches_live.ex      # Bookmark management
+│   │   ├── table_live.ex         # Main tabletop view (embeds panels)
+│   │   ├── gm_panel_live.ex      # GM panel: bookmarks, search, events
+│   │   ├── player_panel_live.ex  # Player panel: actions, exchanges, events
+│   │   ├── branches_live.ex      # Standalone bookmark browser
 │   │   └── lobby_live.ex         # Role selection prompt + redirect
-│   ├── components/
-│   │   ├── table_components.ex   # Entity cards, aspect cards, rings, modals
-│   │   ├── action_components.ex  # Action modals, event rows, entity select
-│   │   ├── exchange_components.ex # Exchange builder, action menu, step palette
-│   │   ├── core_components.ex    # Base Phoenix components
-│   │   └── layouts.ex
-│   └── helpers.ex                # Shared LiveView helpers
+│   └── components/
+│       ├── table_components.ex   # Entity cards, aspect cards, rings
+│       ├── action_components.ex  # Action modals, event rows, entity select
+│       ├── exchange_components.ex # Exchange builder, step palette
+│       ├── bookmark_components.ex # Bookmark tree and list
+│       ├── modal_components.ex   # Shared modal chrome
+│       ├── modal_forms.ex        # Modal form bodies
+│       ├── core_components.ex    # Base Phoenix components
+│       └── layouts.ex
 ```
 
 ## Development
