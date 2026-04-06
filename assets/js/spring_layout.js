@@ -747,10 +747,11 @@ export const SpringLayout = {
     if (e.target.closest("button, a, input, select, textarea, .entity-circle, .zone-token")) return
 
     this._dragMoved = false
+    const pos = this._clientToContainer(e.clientX, e.clientY)
     this.dragging = {
       node,
-      startX: e.clientX - node.x,
-      startY: e.clientY - node.y,
+      offsetX: pos.x - node.x,
+      offsetY: pos.y - node.y,
     }
     springEl.style.zIndex = "100"
     springEl.style.cursor = "grabbing"
@@ -809,10 +810,11 @@ export const SpringLayout = {
         this._longPressTimer = null
       }
       const node = this._pendingDragNode
+      const touchPos = this._clientToContainer(this._touchStartX, this._touchStartY)
       this.dragging = {
         node,
-        startX: this._touchStartX - node.x,
-        startY: this._touchStartY - node.y,
+        offsetX: touchPos.x - node.x,
+        offsetY: touchPos.y - node.y,
       }
       this._pendingDragEl.style.zIndex = "100"
       this._pendingDragNode = null
@@ -837,6 +839,11 @@ export const SpringLayout = {
     this._endDrag()
   },
 
+  _clientToContainer(clientX, clientY) {
+    const rect = this.container.getBoundingClientRect()
+    return { x: clientX - rect.left, y: clientY - rect.top }
+  },
+
   _applyDragMove(clientX, clientY) {
     if (!this._dragMoved) {
       this._dragMoved = true
@@ -847,13 +854,14 @@ export const SpringLayout = {
       }
     }
     const node = this.dragging.node
-    node.x = clientX - this.dragging.startX
-    node.y = clientY - this.dragging.startY
+    const pos = this._clientToContainer(clientX, clientY)
+    node.x = pos.x - this.dragging.offsetX
+    node.y = pos.y - this.dragging.offsetY
     node.vx = 0
     node.vy = 0
 
     if (node.onBorder) {
-      node.borderPos = this.xyToBorderPos(clientX, clientY)
+      node.borderPos = this.xyToBorderPos(pos.x, pos.y)
       const pt = this.borderPosToXY(node.borderPos)
       const edge = this.borderPosToEdge(node.borderPos)
 
