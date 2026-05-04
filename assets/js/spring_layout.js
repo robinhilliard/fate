@@ -31,12 +31,28 @@ export const SpringLayout = {
       } catch (_) {}
     })
 
+    this.handleEvent("vertically_expanded_entities_changed", ({vertically_expanded}) => {
+      try {
+        localStorage.setItem(this.verticallyExpandedStorageKey(), JSON.stringify(vertically_expanded))
+      } catch (_) {}
+    })
+
     try {
       const raw = localStorage.getItem(this.expandedStorageKey())
       if (raw) {
         const expanded = JSON.parse(raw)
         if (Array.isArray(expanded) && expanded.length > 0) {
           this.pushEvent("restore_expanded_entities", { expanded })
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const raw = localStorage.getItem(this.verticallyExpandedStorageKey())
+      if (raw) {
+        const vertically_expanded = JSON.parse(raw)
+        if (Array.isArray(vertically_expanded) && vertically_expanded.length > 0) {
+          this.pushEvent("restore_vertically_expanded_entities", { vertically_expanded })
         }
       }
     } catch (_) {}
@@ -941,6 +957,10 @@ export const SpringLayout = {
 
   expandedStorageKey() {
     return `fate-expanded:${this.branchKey}`
+  },
+
+  verticallyExpandedStorageKey() {
+    return `fate-vertically-expanded:${this.branchKey}`
   },
 
   tableStorageKey() {

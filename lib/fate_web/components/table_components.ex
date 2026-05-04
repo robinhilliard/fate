@@ -20,6 +20,7 @@ defmodule FateWeb.TableComponents do
       |> assign_new(:is_observer, fn -> false end)
       |> assign_new(:current_participant_id, fn -> nil end)
       |> assign_new(:expanded, fn -> false end)
+      |> assign_new(:collapsed, fn -> false end)
       |> assign_new(:can_expand, fn -> false end)
 
     sorted_skills =
@@ -45,7 +46,7 @@ defmodule FateWeb.TableComponents do
       ]}
       style={"background: url('/images/paper.jpg') center/cover; border-left: 4px solid #{@entity.color || "#6b7280"}; backface-visibility: hidden;"}
     >
-      <%= if @can_expand do %>
+      <%= if @can_expand and not @collapsed do %>
         <button
           phx-click="toggle_expand"
           phx-value-entity-id={@entity.id}
@@ -53,6 +54,18 @@ defmodule FateWeb.TableComponents do
         >
           <.icon
             name={if(@expanded, do: "hero-chevron-left-mini", else: "hero-chevron-right-mini")}
+            class="w-4 h-4 text-gray-500"
+          />
+        </button>
+      <% end %>
+      <%= if @can_expand and not @expanded do %>
+        <button
+          phx-click="toggle_vertical_expand"
+          phx-value-entity-id={@entity.id}
+          class="absolute left-1/2 -bottom-3 -translate-x-1/2 w-10 h-6 bg-gray-200/80 hover:bg-gray-300 rounded-b-md flex items-center justify-center transition-all opacity-0 group-hover/card:opacity-100 touch-reveal"
+        >
+          <.icon
+            name={if(@collapsed, do: "hero-chevron-down-mini", else: "hero-chevron-up-mini")}
             class="w-4 h-4 text-gray-500"
           />
         </button>
@@ -117,7 +130,8 @@ defmodule FateWeb.TableComponents do
         <% end %>
       </div>
 
-      <div class={["flex gap-3", @expanded && "flex-row"]}>
+      <%= unless @collapsed do %>
+        <div class={["flex gap-3", @expanded && "flex-row"]}>
         <div class={[
           if(@expanded, do: "flex-1 min-w-0", else: "w-full"),
           @expanded && "flex flex-col"
@@ -425,6 +439,7 @@ defmodule FateWeb.TableComponents do
           </div>
         <% end %>
       </div>
+      <% end %>
 
       <script :type={Phoenix.LiveView.ColocatedHook} name=".RingTrigger">
         export default {

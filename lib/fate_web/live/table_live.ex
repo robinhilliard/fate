@@ -28,6 +28,7 @@ defmodule FateWeb.TableLive do
         |> assign(:participants, [])
         |> assign(:selection, [])
         |> assign(:expanded_entities, MapSet.new())
+        |> assign(:vertically_expanded_entities, MapSet.new())
         |> assign(:current_template_id, nil)
         |> assign(:table_modal, nil)
         |> assign(:splash_visible, true)
@@ -276,22 +277,55 @@ defmodule FateWeb.TableLive do
 
   def handle_event("toggle_expand", %{"entity-id" => entity_id}, socket) do
     expanded = socket.assigns.expanded_entities
+    vertically_expanded = socket.assigns.vertically_expanded_entities
 
     expanded =
       if MapSet.member?(expanded, entity_id),
         do: MapSet.delete(expanded, entity_id),
         else: MapSet.put(expanded, entity_id)
 
+    vertically_expanded =
+      if MapSet.member?(expanded, entity_id),
+        do: MapSet.put(vertically_expanded, entity_id),
+        else: vertically_expanded
+
     socket =
       socket
       |> assign(:expanded_entities, expanded)
+      |> assign(:vertically_expanded_entities, vertically_expanded)
       |> push_event("expanded_entities_changed", %{expanded: MapSet.to_list(expanded)})
+      |> push_event("vertically_expanded_entities_changed", %{
+        vertically_expanded: MapSet.to_list(vertically_expanded)
+      })
 
     {:noreply, socket}
   end
 
   def handle_event("restore_expanded_entities", %{"expanded" => ids}, socket) when is_list(ids) do
     {:noreply, assign(socket, :expanded_entities, MapSet.new(ids))}
+  end
+
+  def handle_event("toggle_vertical_expand", %{"entity-id" => entity_id}, socket) do
+    vertically_expanded = socket.assigns.vertically_expanded_entities
+
+    vertically_expanded =
+      if MapSet.member?(vertically_expanded, entity_id),
+        do: MapSet.delete(vertically_expanded, entity_id),
+        else: MapSet.put(vertically_expanded, entity_id)
+
+    socket =
+      socket
+      |> assign(:vertically_expanded_entities, vertically_expanded)
+      |> push_event("vertically_expanded_entities_changed", %{
+        vertically_expanded: MapSet.to_list(vertically_expanded)
+      })
+
+    {:noreply, socket}
+  end
+
+  def handle_event("restore_vertically_expanded_entities", %{"vertically_expanded" => ids}, socket)
+      when is_list(ids) do
+    {:noreply, assign(socket, :vertically_expanded_entities, MapSet.new(ids))}
   end
 
   def handle_event(
@@ -1114,7 +1148,12 @@ defmodule FateWeb.TableLive do
                 current_participant_id={@current_participant_id}
                 selected={%{id: entity.id, type: "entity"} in @selection}
                 expanded={MapSet.member?(@expanded_entities, entity.id)}
-                can_expand={@is_gm || entity.kind == :pc}
+                collapsed={not MapSet.member?(@vertically_expanded_entities, entity.id)}
+                can_expand={
+                  @is_gm || entity.kind == :pc ||
+                    (not is_nil(entity.controller_id) and
+                       entity.controller_id == @current_participant_id)
+                }
               />
             </div>
           <% end %>
@@ -1135,6 +1174,7 @@ defmodule FateWeb.TableLive do
                   current_participant_id={@current_participant_id}
                   selected={%{id: entity.id, type: "entity"} in @selection}
                   expanded={MapSet.member?(@expanded_entities, entity.id)}
+                  collapsed={not MapSet.member?(@vertically_expanded_entities, entity.id)}
                   can_expand={true}
                 />
               </div>
@@ -1156,7 +1196,12 @@ defmodule FateWeb.TableLive do
                 current_participant_id={@current_participant_id}
                 selected={%{id: entity.id, type: "entity"} in @selection}
                 expanded={MapSet.member?(@expanded_entities, entity.id)}
-                can_expand={@is_gm || entity.kind == :pc}
+                collapsed={not MapSet.member?(@vertically_expanded_entities, entity.id)}
+                can_expand={
+                  @is_gm || entity.kind == :pc ||
+                    (not is_nil(entity.controller_id) and
+                       entity.controller_id == @current_participant_id)
+                }
               />
             </div>
           <% end %>
