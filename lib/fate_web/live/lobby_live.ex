@@ -425,41 +425,8 @@ defmodule FateWeb.LobbyLive do
   end
 
   defp ensure_bookmark_participant(bookmark_id, participant_id, role) do
-    require Ash.Query
-
-    existing =
-      Ash.read(
-        Fate.Game.BookmarkParticipant
-        |> Ash.Query.filter(bookmark_id: bookmark_id, participant_id: participant_id)
-      )
-
-    case existing do
-      {:ok, [_ | _]} ->
-        :ok
-
-      _ ->
-        seat_index = next_seat_index(bookmark_id)
-        role_atom = if role == "gm", do: :gm, else: :player
-
-        Fate.Game.create_bookmark_participant(%{
-          bookmark_id: bookmark_id,
-          participant_id: participant_id,
-          role: role_atom,
-          seat_index: seat_index
-        })
-    end
-  end
-
-  defp next_seat_index(bookmark_id) do
-    require Ash.Query
-
-    case Ash.read(
-           Fate.Game.BookmarkParticipant
-           |> Ash.Query.filter(bookmark_id: bookmark_id)
-         ) do
-      {:ok, bps} -> length(bps)
-      _ -> 0
-    end
+    role_atom = if role == "gm", do: :gm, else: :player
+    Bookmarks.seat_participant(bookmark_id, participant_id, role_atom)
   end
 
   defp find_or_create_bookmark do

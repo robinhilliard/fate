@@ -5,7 +5,13 @@ defmodule FateWeb.BranchesLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket), do: Bookmarks.subscribe_bookmarks_list()
     {:ok, assign(socket, :bookmarks, Bookmarks.list_active())}
+  end
+
+  @impl true
+  def handle_info({:bookmarks_updated, bookmarks}, socket) do
+    {:noreply, assign(socket, :bookmarks, bookmarks)}
   end
 
   @impl true
@@ -80,10 +86,7 @@ defmodule FateWeb.BranchesLive do
   def handle_event("fork_bookmark", %{"bookmark-id" => bookmark_id}, socket) do
     case Bookmarks.fork(bookmark_id) do
       {:ok, _new_bm} ->
-        {:noreply,
-         socket
-         |> assign(:bookmarks, Bookmarks.list_active())
-         |> put_flash(:info, "Bookmark created")}
+        {:noreply, put_flash(socket, :info, "Bookmark created")}
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Failed to create bookmark")}
@@ -92,6 +95,6 @@ defmodule FateWeb.BranchesLive do
 
   def handle_event("archive_bookmark", %{"bookmark-id" => bookmark_id}, socket) do
     Bookmarks.archive(bookmark_id)
-    {:noreply, assign(socket, :bookmarks, Bookmarks.list_active())}
+    {:noreply, socket}
   end
 end

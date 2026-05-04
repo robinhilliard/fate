@@ -44,6 +44,7 @@ defmodule FateWeb.TableLive do
   def handle_params(%{"bookmark_id" => bookmark_id} = params, _uri, socket) do
     if connected?(socket) do
       Engine.subscribe(bookmark_id)
+      Bookmarks.subscribe_participants(bookmark_id)
 
       Phoenix.PubSub.subscribe(
         Fate.PubSub,
@@ -92,6 +93,10 @@ defmodule FateWeb.TableLive do
 
   def handle_info({:selection_updated, selection}, socket) do
     {:noreply, assign(socket, :selection, selection)}
+  end
+
+  def handle_info({:participants_updated, participants}, socket) do
+    {:noreply, assign(socket, :participants, participants)}
   end
 
   def handle_info({:dock_panel, panel, from_pid}, socket) do

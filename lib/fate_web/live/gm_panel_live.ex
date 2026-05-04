@@ -3,6 +3,7 @@ defmodule FateWeb.GmPanelLive do
 
   alias Fate.Engine
   alias Fate.Engine.Search
+  alias Fate.Game.Bookmarks
 
   import FateWeb.ActionComponents
   import FateWeb.BookmarkComponents
@@ -59,13 +60,20 @@ defmodule FateWeb.GmPanelLive do
     socket =
       socket
       |> assign(:state, state)
-      |> assign(:bookmarks, load_active_bookmarks())
       |> assign(:mention_catalog_json, Engine.mention_catalog_json(socket.assigns.bookmark_id))
       |> refresh_search_results()
 
     {:noreply, socket}
   rescue
     DBConnection.ConnectionError -> {:noreply, socket}
+  end
+
+  def handle_info({:participants_updated, participants}, socket) do
+    {:noreply, assign(socket, :participants, participants)}
+  end
+
+  def handle_info({:bookmarks_updated, bookmarks}, socket) do
+    {:noreply, assign(socket, :bookmarks, bookmarks)}
   end
 
   def handle_info({:search_selection_updated, %{entity_ids: eids, scene_ids: sids}}, socket) do
@@ -814,6 +822,8 @@ defmodule FateWeb.GmPanelLive do
 
   defp init_state(socket, bookmark_id) do
     Engine.subscribe(bookmark_id)
+    Bookmarks.subscribe_participants(bookmark_id)
+    Bookmarks.subscribe_bookmarks_list()
 
     pid = socket.assigns.current_participant_id
 
@@ -828,23 +838,11 @@ defmodule FateWeb.GmPanelLive do
       {:ok, state} ->
         socket
         |> assign(:state, state)
-        |> assign(:bookmarks, load_active_bookmarks())
+        |> assign(:bookmarks, Bookmarks.list_active())
+        |> assign(:participants, Bookmarks.load_participants(bookmark_id))
 
       _ ->
         socket
-    end
-  end
-
-  defp load_active_bookmarks do
-    require Ash.Query
-
-    case Ash.read(
-           Fate.Game.Bookmark
-           |> Ash.Query.filter(status: :active)
-           |> Ash.Query.sort(created_at: :asc)
-         ) do
-      {:ok, bms} -> bms
-      _ -> []
     end
   end
 end

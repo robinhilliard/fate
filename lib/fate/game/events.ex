@@ -1,8 +1,13 @@
 defmodule Fate.Game.Events do
   @moduledoc """
   Context functions for event lifecycle operations.
+
+  Mutating functions in this module finish by calling
+  `Fate.Engine.broadcast_state/1` so any subscriber on the
+  `bookmark:#{"<bookmark_id>"}` PubSub topic sees the new derived state.
   """
 
+  alias Fate.Engine
   alias Fate.Game
   alias Fate.Game.Event
 
@@ -72,6 +77,7 @@ defmodule Fate.Game.Events do
         Game.advance_head!(bookmark, %{head_event_id: event_id})
       end
 
+      Engine.broadcast_state(bookmark_id)
       :ok
     else
       _ -> {:error, :not_found}
@@ -98,7 +104,9 @@ defmodule Fate.Game.Events do
           :ok
       end
 
-      Game.delete_event(event)
+      result = Game.delete_event(event)
+      Engine.broadcast_state(bookmark_id)
+      result
     else
       _ -> {:error, :not_found}
     end

@@ -1085,25 +1085,14 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("create_bookmark", args, state) do
-    with {:ok, parent} when parent != nil <- Fate.Game.get_bookmark(state.bookmark_id),
-         {:ok, bmk_event} <-
-           Fate.Game.append_event(%{
-             parent_id: parent.head_event_id,
-             type: :bookmark_create,
-             description: args["name"],
-             detail: %{"name" => args["name"]}
-           }),
-         {:ok, bookmark} <-
-           Fate.Game.create_bookmark(%{
-             name: args["name"],
-             description: args["description"],
-             head_event_id: bmk_event.id,
-             parent_bookmark_id: parent.id
-           }) do
-      {:ok, [%{type: "text", text: "Created bookmark '#{args["name"]}' (#{bookmark.id})"}], state}
-    else
-      {:error, reason} -> {:error, %{code: -32000, message: inspect(reason)}, state}
-      _ -> {:error, %{code: -32000, message: "Failed to create bookmark"}, state}
+    case Bookmarks.create_child_bookmark(state.bookmark_id, args["name"],
+           description: args["description"]
+         ) do
+      {:ok, bookmark} ->
+        {:ok, [%{type: "text", text: "Created bookmark '#{args["name"]}' (#{bookmark.id})"}], state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: inspect(reason)}, state}
     end
   end
 
@@ -1911,16 +1900,10 @@ defmodule Fate.McpServer do
   def handle_call_tool("add_participant", %{"name" => name} = args, state) do
     color = args["color"] || random_participant_color()
     role_atom = if args["role"] == "gm", do: :gm, else: :player
-    seat_index = next_seat_index(state.bookmark_id)
 
     with {:ok, participant} <- Fate.Game.create_participant(%{name: name, color: color}),
-         {:ok, _bp} <-
-           Fate.Game.create_bookmark_participant(%{
-             bookmark_id: state.bookmark_id,
-             participant_id: participant.id,
-             role: role_atom,
-             seat_index: seat_index
-           }) do
+         {:ok, %Fate.Game.BookmarkParticipant{seat_index: seat_index}} <-
+           Bookmarks.seat_participant(state.bookmark_id, participant.id, role_atom) do
       payload = %{
         participant_id: participant.id,
         name: name,
@@ -1937,36 +1920,22 @@ defmodule Fate.McpServer do
   end
 
   def handle_call_tool("remove_participant", %{"participant_id" => participant_id}, state) do
-    bookmark_id = state.bookmark_id
+    case Bookmarks.unseat_participant(state.bookmark_id, participant_id) do
+      {:ok, %{participant_deleted: true}} ->
+        {:ok,
+         [%{type: "text", text: "Participant removed from table and participant record deleted."}],
+         state}
 
-    case Ash.read(
-           Fate.Game.BookmarkParticipant
-           |> Ash.Query.filter(bookmark_id: bookmark_id)
-           |> Ash.Query.filter(participant_id: participant_id)
-         ) do
-      {:ok, [bp | _]} ->
-        case Fate.Game.delete_bookmark_participant(bp) do
-          :ok ->
-            participant_deleted? = maybe_delete_orphaned_participant(participant_id)
+      {:ok, %{participant_deleted: false}} ->
+        {:ok, [%{type: "text", text: "Participant unseated from this bookmark."}], state}
 
-            text =
-              if participant_deleted?,
-                do: "Participant removed from table and participant record deleted.",
-                else: "Participant unseated from this bookmark."
-
-            {:ok, [%{type: "text", text: text}], state}
-
-          {:error, reason} ->
-            {:error,
-             %{code: -32000, message: "Failed to remove participant: #{inspect(reason)}"}, state}
-        end
-
-      {:ok, []} ->
+      {:error, :not_seated} ->
         {:error,
          %{code: -32000, message: "Participant is not seated at the current bookmark."}, state}
 
       {:error, reason} ->
-        {:error, %{code: -32000, message: inspect(reason)}, state}
+        {:error,
+         %{code: -32000, message: "Failed to remove participant: #{inspect(reason)}"}, state}
     end
   end
 
@@ -1975,18 +1944,6 @@ defmodule Fate.McpServer do
 
     case Fate.Game.Events.reorder(event_id, after_event_id, state.bookmark_id) do
       :ok ->
-        case Engine.derive_state(state.bookmark_id) do
-          {:ok, new_state} ->
-            Phoenix.PubSub.broadcast(
-              Fate.PubSub,
-              "bookmark:#{state.bookmark_id}",
-              {:state_updated, new_state}
-            )
-
-          _ ->
-            :ok
-        end
-
         {:ok, [%{type: "text", text: "Event reordered"}], state}
 
       {:error, reason} ->
@@ -2266,39 +2223,7 @@ defmodule Fate.McpServer do
     end
   end
 
-  defp next_seat_index(bookmark_id) do
-    case Ash.read(
-           Fate.Game.BookmarkParticipant
-           |> Ash.Query.filter(bookmark_id: bookmark_id)
-         ) do
-      {:ok, bps} -> length(bps)
-      _ -> 0
-    end
-  end
-
   defp random_participant_color do
     Enum.random(["#2563eb", "#16a34a", "#d946ef", "#f59e0b", "#06b6d4", "#ef4444", "#8b5cf6"])
-  end
-
-  defp maybe_delete_orphaned_participant(participant_id) do
-    case Ash.read(
-           Fate.Game.BookmarkParticipant
-           |> Ash.Query.filter(participant_id: participant_id)
-         ) do
-      {:ok, []} ->
-        case Fate.Game.get_participant(participant_id) do
-          {:ok, %Fate.Game.Participant{} = participant} ->
-            case Fate.Game.delete_participant(participant) do
-              :ok -> true
-              _ -> false
-            end
-
-          _ ->
-            false
-        end
-
-      _ ->
-        false
-    end
   end
 end

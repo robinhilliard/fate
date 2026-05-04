@@ -85,6 +85,10 @@ defmodule FateWeb.PlayerPanelLive do
     {:noreply, assign(socket, :selection, selection)}
   end
 
+  def handle_info({:participants_updated, participants}, socket) do
+    {:noreply, assign(socket, :participants, participants)}
+  end
+
   def handle_info({:search_selection_updated, %{entity_ids: eids, scene_ids: sids}}, socket) do
     {:noreply,
      socket
@@ -1247,6 +1251,7 @@ defmodule FateWeb.PlayerPanelLive do
 
   defp subscribe_all(bookmark_id, participant_id) do
     Engine.subscribe(bookmark_id)
+    Fate.Game.Bookmarks.subscribe_participants(bookmark_id)
 
     Phoenix.PubSub.subscribe(
       Fate.PubSub,
