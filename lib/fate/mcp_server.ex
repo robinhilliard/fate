@@ -749,6 +749,40 @@ defmodule Fate.McpServer do
         inputSchema: %{type: "object", properties: %{}}
       },
       %{
+        name: "add_participant",
+        description:
+          "Add a new participant to the current bookmark's table. Creates a new participant record and seats them at the next available seat.",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            name: %{type: "string", description: "Display name of the participant"},
+            color: %{
+              type: "string",
+              description:
+                "Hex colour like #2563eb. If omitted, a random colour from the default palette is chosen."
+            },
+            role: %{
+              type: "string",
+              description: "Seat role. Defaults to player.",
+              enum: ["player", "gm"]
+            }
+          },
+          required: ["name"]
+        }
+      },
+      %{
+        name: "remove_participant",
+        description:
+          "Remove a participant from the current bookmark's table. Unseats them; if the participant is not seated at any other bookmark the participant record itself is also deleted.",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            participant_id: %{type: "string"}
+          },
+          required: ["participant_id"]
+        }
+      },
+      %{
         name: "reorder_event",
         description:
           "Move an event to a new position in the chain, placing it immediately after the specified event",
@@ -1874,6 +1908,68 @@ defmodule Fate.McpServer do
     {:ok, [%{type: "text", text: Jason.encode!(list, pretty: true)}], state}
   end
 
+  def handle_call_tool("add_participant", %{"name" => name} = args, state) do
+    color = args["color"] || random_participant_color()
+    role_atom = if args["role"] == "gm", do: :gm, else: :player
+    seat_index = next_seat_index(state.bookmark_id)
+
+    with {:ok, participant} <- Fate.Game.create_participant(%{name: name, color: color}),
+         {:ok, _bp} <-
+           Fate.Game.create_bookmark_participant(%{
+             bookmark_id: state.bookmark_id,
+             participant_id: participant.id,
+             role: role_atom,
+             seat_index: seat_index
+           }) do
+      payload = %{
+        participant_id: participant.id,
+        name: name,
+        color: color,
+        role: role_atom,
+        seat_index: seat_index
+      }
+
+      {:ok, [%{type: "text", text: Jason.encode!(payload, pretty: true)}], state}
+    else
+      {:error, reason} ->
+        {:error, %{code: -32000, message: "Failed to add participant: #{inspect(reason)}"}, state}
+    end
+  end
+
+  def handle_call_tool("remove_participant", %{"participant_id" => participant_id}, state) do
+    bookmark_id = state.bookmark_id
+
+    case Ash.read(
+           Fate.Game.BookmarkParticipant
+           |> Ash.Query.filter(bookmark_id: bookmark_id)
+           |> Ash.Query.filter(participant_id: participant_id)
+         ) do
+      {:ok, [bp | _]} ->
+        case Fate.Game.delete_bookmark_participant(bp) do
+          :ok ->
+            participant_deleted? = maybe_delete_orphaned_participant(participant_id)
+
+            text =
+              if participant_deleted?,
+                do: "Participant removed from table and participant record deleted.",
+                else: "Participant unseated from this bookmark."
+
+            {:ok, [%{type: "text", text: text}], state}
+
+          {:error, reason} ->
+            {:error,
+             %{code: -32000, message: "Failed to remove participant: #{inspect(reason)}"}, state}
+        end
+
+      {:ok, []} ->
+        {:error,
+         %{code: -32000, message: "Participant is not seated at the current bookmark."}, state}
+
+      {:error, reason} ->
+        {:error, %{code: -32000, message: inspect(reason)}, state}
+    end
+  end
+
   def handle_call_tool("reorder_event", %{"event_id" => event_id} = args, state) do
     after_event_id = args["after_event_id"]
 
@@ -2167,6 +2263,42 @@ defmodule Fate.McpServer do
     case resolve_bookmark(args) do
       nil -> nil
       b -> b.id
+    end
+  end
+
+  defp next_seat_index(bookmark_id) do
+    case Ash.read(
+           Fate.Game.BookmarkParticipant
+           |> Ash.Query.filter(bookmark_id: bookmark_id)
+         ) do
+      {:ok, bps} -> length(bps)
+      _ -> 0
+    end
+  end
+
+  defp random_participant_color do
+    Enum.random(["#2563eb", "#16a34a", "#d946ef", "#f59e0b", "#06b6d4", "#ef4444", "#8b5cf6"])
+  end
+
+  defp maybe_delete_orphaned_participant(participant_id) do
+    case Ash.read(
+           Fate.Game.BookmarkParticipant
+           |> Ash.Query.filter(participant_id: participant_id)
+         ) do
+      {:ok, []} ->
+        case Fate.Game.get_participant(participant_id) do
+          {:ok, %Fate.Game.Participant{} = participant} ->
+            case Fate.Game.delete_participant(participant) do
+              :ok -> true
+              _ -> false
+            end
+
+          _ ->
+            false
+        end
+
+      _ ->
+        false
     end
   end
 end
